@@ -148,7 +148,7 @@ export async function extractOrderWithOllama(
     }
 
     // Parse and validate with Zod
-    const parseResult = parseGemmaOutput(assistantContent);
+    const parseResult = parseGemmaOutput(assistantContent, customerMessage);
 
     if (!parseResult.success) {
       return {

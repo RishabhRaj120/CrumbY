@@ -66,11 +66,55 @@ describe("Gemma 3 4B Output Parsing & Invariants", () => {
 
     const result = parseGemmaOutput(rawModelJson);
     expect(result.success).toBe(true);
+    expect(result.data?.product).toBe("cake");
     expect(result.data?.quantity).toBeNull();
     expect(result.data?.weight).toBeNull();
     expect(result.data?.resolved_date).toBeNull();
     expect(result.data?.payment_amount).toBeNull();
     expect(result.data?.missing_or_unverified.length).toBeGreaterThan(0);
+    expect(result.data?.requires_confirmation).toBe(true);
+  });
+
+  // REGRESSION TEST: Generic bakery category without flavor ("Hey, I need a cake for my birthday next week. Can you help?")
+  it("REGRESSION: extracts generic product 'cake' without inventing a flavor while preserving nulls", () => {
+    const rawModelJson = JSON.stringify({
+      customer_name: null,
+      product: "cake",
+      quantity: null,
+      weight: null,
+      requested_date: "next week",
+      resolved_date: null,
+      requested_time: null,
+      dietary_preference: null,
+      fulfillment_method: "unknown",
+      payment_amount: null,
+      payment_currency: null,
+      payment_method: null,
+      payment_status: "not_mentioned",
+      notes: [],
+      missing_or_unverified: [
+        "Exact calendar date",
+        "Flavor details",
+        "Cake size/weight",
+        "Pickup or delivery",
+        "Payment details",
+        "Pickup/delivery time window",
+      ],
+      requires_confirmation: true,
+    });
+
+    const result = parseGemmaOutput(rawModelJson);
+    expect(result.success).toBe(true);
+    expect(result.data?.product).toBe("cake");
+    expect(result.data?.quantity).toBeNull();
+    expect(result.data?.weight).toBeNull();
+    expect(result.data?.requested_date).toBe("next week");
+    expect(result.data?.resolved_date).toBeNull();
+    expect(result.data?.requested_time).toBeNull();
+    expect(result.data?.fulfillment_method).toBe("unknown");
+    expect(result.data?.payment_amount).toBeNull();
+    expect(result.data?.payment_status).toBe("not_mentioned");
+    expect(result.data?.missing_or_unverified).toContain("Flavor details");
     expect(result.data?.requires_confirmation).toBe(true);
   });
 
@@ -97,9 +141,54 @@ describe("Gemma 3 4B Output Parsing & Invariants", () => {
 
     const result = parseGemmaOutput(rawModelJson);
     expect(result.success).toBe(true);
+    expect(result.data?.fulfillment_method).toBe("unknown");
     expect(result.data?.payment_amount).toBe(1000);
     expect(result.data?.payment_status).toBe("customer_reported_unpaid");
     expect(result.data?.payment_status).not.toBe("customer_reported_paid");
+  });
+
+  // FULFILLMENT GUARDRAIL TESTS
+  it("strictly enforces fulfillment_method as 'unknown' if model guessed 'pickup' without customer mention", () => {
+    const rawModelJson = JSON.stringify({
+      product: "chocolate cake",
+      fulfillment_method: "pickup", // Model mistakenly guessed pickup
+      requested_date: "Saturday",
+      payment_amount: 1000,
+      payment_status: "customer_reported_unpaid",
+    });
+
+    // Customer message does NOT mention pickup or delivery
+    const customerMsg = "Can you make a chocolate cake for Saturday? I'll send 1000 later.";
+    const result = parseGemmaOutput(rawModelJson, customerMsg);
+    expect(result.success).toBe(true);
+    expect(result.data?.fulfillment_method).toBe("unknown");
+    expect(result.data?.missing_or_unverified).toContain("Pickup or delivery method");
+  });
+
+  it("preserves fulfillment_method 'pickup' when customer explicitly mentions pickup", () => {
+    const rawModelJson = JSON.stringify({
+      product: "chocolate truffle cake",
+      fulfillment_method: "pickup",
+      payment_status: "customer_reported_paid",
+    });
+
+    const customerMsg = "Hi, need a cake for Sunday. Can I pick it up around 6?";
+    const result = parseGemmaOutput(rawModelJson, customerMsg);
+    expect(result.success).toBe(true);
+    expect(result.data?.fulfillment_method).toBe("pickup");
+  });
+
+  it("preserves fulfillment_method 'delivery' when customer explicitly mentions delivery", () => {
+    const rawModelJson = JSON.stringify({
+      product: "muffins",
+      fulfillment_method: "delivery",
+      payment_status: "not_mentioned",
+    });
+
+    const customerMsg = "Could we get 6 blueberry muffins delivered to Indiranagar on Friday?";
+    const result = parseGemmaOutput(rawModelJson, customerMsg);
+    expect(result.success).toBe(true);
+    expect(result.data?.fulfillment_method).toBe("delivery");
   });
 
   // TEST D: DIETARY RESTRICTION & WEIGHT PRESERVATION

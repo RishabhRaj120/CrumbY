@@ -34,7 +34,10 @@ export function extractJsonString(raw: string): string {
  * Pre-processes and normalizes parsed JSON object before Zod validation.
  * Fixes common minor LLM output quirks like string quantities "1" -> 1.
  */
-function normalizePayload(rawObj: Record<string, unknown>): Record<string, unknown> {
+function normalizePayload(
+  rawObj: Record<string, unknown>,
+  customerMessage?: string
+): Record<string, unknown> {
   const normalized = { ...rawObj };
 
   // Normalize quantity: if string like "1" or "2", parse to number
@@ -125,6 +128,25 @@ function normalizePayload(rawObj: Record<string, unknown>): Record<string, unkno
     normalized.fulfillment_method = "unknown";
   }
 
+  // Invariant: fulfillment_method MUST be "unknown" unless the customer explicitly states pickup or delivery
+  if (
+    customerMessage &&
+    (normalized.fulfillment_method === "pickup" || normalized.fulfillment_method === "delivery")
+  ) {
+    const hasExplicitPickup = /\b(pick(?:ing)?\s*(?:it\s*|them\s*)?up|pick-?up|collect(?:ing|ion|ed|s)?|carryout|takeaway)\b/i.test(
+      customerMessage
+    );
+    const hasExplicitDelivery = /\b(deliver(?:ed|y|ing|s)?|drop\s*off|ship(?:ping)?|courier|send\s+to|address)\b/i.test(
+      customerMessage
+    );
+
+    if (normalized.fulfillment_method === "pickup" && !hasExplicitPickup) {
+      normalized.fulfillment_method = "unknown";
+    } else if (normalized.fulfillment_method === "delivery" && !hasExplicitDelivery) {
+      normalized.fulfillment_method = "unknown";
+    }
+  }
+
   // Guardrail: Do NOT let cake weight (e.g., 500g) be interpreted as quantity (500)
   if (typeof normalized.quantity === "number" && normalized.quantity > 30) {
     if (typeof normalized.weight === "string" && normalized.weight.includes(String(normalized.quantity))) {
@@ -153,7 +175,10 @@ function normalizePayload(rawObj: Record<string, unknown>): Record<string, unkno
   if (!normalized.requested_time && !missing.some((m) => m.toLowerCase().includes("time"))) {
     missing.push("Pickup/delivery time window");
   }
-  if (normalized.fulfillment_method === "unknown" && !missing.some((m) => m.toLowerCase().includes("fulfillment") || m.toLowerCase().includes("pickup"))) {
+  if (
+    normalized.fulfillment_method === "unknown" &&
+    !missing.some((m) => m.toLowerCase().includes("fulfillment") || m.toLowerCase().includes("pickup or delivery"))
+  ) {
     missing.push("Pickup or delivery method");
   }
   if (normalized.payment_status === "not_mentioned" || normalized.payment_status === "unclear" || normalized.payment_status === "customer_reported_unpaid") {
@@ -173,7 +198,7 @@ function normalizePayload(rawObj: Record<string, unknown>): Record<string, unkno
  * Conservative parser for Gemma 3 4B extraction output.
  * Uses Zod validation to ensure data integrity.
  */
-export function parseGemmaOutput(rawText: string): ParseResult {
+export function parseGemmaOutput(rawText: string, customerMessage?: string): ParseResult {
   if (!rawText || !rawText.trim()) {
     return {
       success: false,
@@ -203,7 +228,7 @@ export function parseGemmaOutput(rawText: string): ParseResult {
     };
   }
 
-  const normalized = normalizePayload(parsedJson as Record<string, unknown>);
+  const normalized = normalizePayload(parsedJson as Record<string, unknown>, customerMessage);
   const validation = extractedOrderSchema.safeParse(normalized);
 
   if (!validation.success) {
