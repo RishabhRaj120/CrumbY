@@ -11,8 +11,11 @@ import {
   Package,
   AlertCircle,
   Sparkles,
+  Flame,
+  Check,
+  Award,
 } from "lucide-react";
-import { Order } from "@/types/order";
+import { Order, OrderStatus } from "@/types/order";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import {
@@ -28,6 +31,7 @@ interface OrderTableProps {
   onReview: (order: Order) => void;
   onDraftReply: (order: Order) => void;
   onQuickConfirm: (order: Order) => void;
+  onQuickTransition?: (order: Order, newStatus: OrderStatus) => void;
   onDeleteRequest: (order: Order) => void;
   onOpenImport: () => void;
   onLoadDemoData: () => void;
@@ -38,6 +42,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({
   onReview,
   onDraftReply,
   onQuickConfirm,
+  onQuickTransition,
   onDeleteRequest,
   onOpenImport,
   onLoadDemoData,
@@ -78,6 +83,24 @@ export const OrderTable: React.FC<OrderTableProps> = ({
     );
   }
 
+  const getStatusBadgeVariant = (status: OrderStatus) => {
+    switch (status) {
+      case "confirmed":
+        return "success";
+      case "in_preparation":
+        return "terracotta";
+      case "ready":
+        return "success";
+      case "completed":
+        return "neutral";
+      case "cancelled":
+        return "danger";
+      case "needs_review":
+      default:
+        return "warning";
+    }
+  };
+
   return (
     <div className="bg-crumb-surface border border-crumb-border rounded-xl shadow-sm overflow-hidden">
       {/* Desktop Table View */}
@@ -100,6 +123,9 @@ export const OrderTable: React.FC<OrderTableProps> = ({
               const fulfillmentBadge = getFulfillmentBadge(
                 order.fulfillment_method
               );
+              const hasPendingChange = (order.change_requests || []).some(
+                (r) => r.status === "pending"
+              );
 
               return (
                 <tr
@@ -110,13 +136,18 @@ export const OrderTable: React.FC<OrderTableProps> = ({
                   <td className="py-3.5 px-4 align-top">
                     <div className="space-y-1.5">
                       <Badge
-                        variant={
-                          order.status === "confirmed" ? "success" : "warning"
-                        }
+                        variant={getStatusBadgeVariant(order.status)}
                         dot
                       >
                         {statusBadge.label}
                       </Badge>
+                      {hasPendingChange && (
+                        <div>
+                          <Badge variant="warning" size="sm">
+                            Pending Change
+                          </Badge>
+                        </div>
+                      )}
                       {order.is_demo && (
                         <div>
                           <Badge variant="demo">Demo Sample</Badge>
@@ -188,7 +219,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({
                       </div>
                       {order.requested_time && (
                         <div className="flex items-center gap-1.5 text-[11px] text-crumb-muted">
-                          <Clock className="w-3 h-3 text-crumb-subtle flex-shrink-0" />
+                          <Clock className="w-3.5 h-3.5 text-crumb-subtle flex-shrink-0" />
                           <span>{order.requested_time}</span>
                         </div>
                       )}
@@ -235,9 +266,9 @@ export const OrderTable: React.FC<OrderTableProps> = ({
                         size="sm"
                         onClick={() => onReview(order)}
                         leftIcon={<Edit3 className="w-3 h-3" />}
-                        title="Review and edit order"
+                        title="View details and review order"
                       >
-                        Review
+                        {order.status === "needs_review" ? "Review" : "Details"}
                       </Button>
 
                       <Button
@@ -250,6 +281,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({
                         title="Draft customer reply"
                       />
 
+                      {/* Quick Lifecycle progression buttons */}
                       {order.status === "needs_review" && (
                         <Button
                           variant="ghost"
@@ -259,6 +291,42 @@ export const OrderTable: React.FC<OrderTableProps> = ({
                             <CheckCircle className="w-3.5 h-3.5 text-crumb-sage" />
                           }
                           title="Confirm order"
+                        />
+                      )}
+
+                      {order.status === "confirmed" && onQuickTransition && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onQuickTransition(order, "in_preparation")}
+                          leftIcon={
+                            <Flame className="w-3.5 h-3.5 text-orange-600" />
+                          }
+                          title="Start preparation"
+                        />
+                      )}
+
+                      {order.status === "in_preparation" && onQuickTransition && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onQuickTransition(order, "ready")}
+                          leftIcon={
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          }
+                          title="Mark ready"
+                        />
+                      )}
+
+                      {order.status === "ready" && onQuickTransition && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onQuickTransition(order, "completed")}
+                          leftIcon={
+                            <Award className="w-3.5 h-3.5 text-purple-600" />
+                          }
+                          title="Mark completed"
                         />
                       )}
 
@@ -288,6 +356,9 @@ export const OrderTable: React.FC<OrderTableProps> = ({
           const fulfillmentBadge = getFulfillmentBadge(
             order.fulfillment_method
           );
+          const hasPendingChange = (order.change_requests || []).some(
+            (r) => r.status === "pending"
+          );
 
           return (
             <div key={order.id} className="p-4 space-y-3">
@@ -301,12 +372,19 @@ export const OrderTable: React.FC<OrderTableProps> = ({
                     {order.dietary_preference ? ` • ${order.dietary_preference}` : ""}
                   </p>
                 </div>
-                <Badge
-                  variant={order.status === "confirmed" ? "success" : "warning"}
-                  dot
-                >
-                  {statusBadge.label}
-                </Badge>
+                <div className="flex flex-col items-end gap-1">
+                  <Badge
+                    variant={getStatusBadgeVariant(order.status)}
+                    dot
+                  >
+                    {statusBadge.label}
+                  </Badge>
+                  {hasPendingChange && (
+                    <Badge variant="warning" size="sm">
+                      Pending Change
+                    </Badge>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-xs bg-crumb-surface-alt/60 p-2.5 rounded-lg border border-crumb-border">
@@ -368,7 +446,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({
                     onClick={() => onReview(order)}
                     leftIcon={<Edit3 className="w-3 h-3" />}
                   >
-                    Review
+                    {order.status === "needs_review" ? "Review" : "Details"}
                   </Button>
                   <Button
                     variant="ghost"

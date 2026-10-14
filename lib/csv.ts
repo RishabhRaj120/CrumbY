@@ -59,7 +59,9 @@ export function generateOrdersCsv(orders: Order[]): string {
     order.requested_date || "",
     order.resolved_date || "",
     order.requested_time || "",
-    order.payment_amount !== null ? order.payment_amount : "",
+    order.payment_amount !== null && order.payment_amount >= 0
+      ? order.payment_amount
+      : "",
     order.payment_currency || "",
     order.payment_method || "",
     order.payment_status,

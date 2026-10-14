@@ -11,6 +11,7 @@ import { DraftReplyModal } from "@/components/orders/DraftReplyModal";
 import { DeleteConfirmModal } from "@/components/orders/DeleteConfirmModal";
 import {
   Order,
+  OrderStatus,
   ExtractedOrderPayload,
   OrderFilterStatus,
   OrderFilterPayment,
@@ -21,6 +22,7 @@ import {
   addOrder,
   updateOrder,
   deleteOrder,
+  transitionOrderStatus,
   loadDemoOrders,
   removeDemoOrders,
   calculateDashboardStats,
@@ -131,7 +133,11 @@ export default function DashboardPage() {
   };
 
   const handleQuickConfirm = (order: Order) => {
-    updateOrder(order.id, { status: "confirmed" });
+    transitionOrderStatus(order.id, "confirmed");
+  };
+
+  const handleQuickTransition = (order: Order, newStatus: OrderStatus) => {
+    transitionOrderStatus(order.id, newStatus);
   };
 
   const handleDeleteConfirm = (orderId: string) => {
@@ -203,6 +209,7 @@ export default function DashboardPage() {
           onReview={handleOpenReview}
           onDraftReply={(order) => setDraftReplyOrder(order)}
           onQuickConfirm={handleQuickConfirm}
+          onQuickTransition={handleQuickTransition}
           onDeleteRequest={(order) => setDeleteTargetOrder(order)}
           onOpenImport={() => setIsImportModalOpen(true)}
           onLoadDemoData={loadDemoOrders}

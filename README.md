@@ -40,15 +40,25 @@ When multiple orders arrive each week, messages get buried, dietary restrictions
 ## 4. Core Features
 - **One-Click Message Import:** Paste any unstructured customer chat message (supports up to 5,000 characters).
 - **Local Gemma 3 4B Extraction:** Extracts structured fields using an on-device model without third-party cloud APIs.
+- **Strict Payment Data Integrity:** Never extracts or accepts negative, NaN, or non-finite payment amounts. When the customer does not mention payment, the application ensures `payment_amount: null`, `payment_method: null`, and `payment_status: "not_mentioned"`. It strictly prohibits inventing payment methods (e.g. Cash, GPay, UPI) or assuming bank verification.
+- **Weight Unit Preservation:** Weights are stored and displayed with explicit units (`1 kg`, `500g`, `2 lbs`). Proposing changes (e.g. `500g -> 1 kg`) preserves units and normalizes bare inputs so bare numbers like `1000` never appear.
 - **Quantity & Weight Separation:** Disallows confusing cake weight (e.g. 500g) with count (e.g. 1 cake).
 - **Verbatim Date Preservation:** Preserves original customer expressions (`"Sunday evening"`) and only resolves ISO dates when unambiguous calendar context exists.
 - **Strict Payment Classification:** Differentiates customer-reported payment (`customer_reported_paid`) from actual bank verification. Never claims unverified transactions are bank-verified.
-- **Interactive Order Review Panel:** Full editable form allowing the baker to correct any AI mistakes or fill gaps before confirming.
+- **Interactive Order Review Panel:** Full editable form allowing the baker to correct any AI mistakes or fill gaps before confirming, with client-side and domain validation.
+- **Order Lifecycle Progression:** Enforces a controlled lifecycle (`needs_review -> confirmed -> in_preparation -> ready -> completed`, plus `cancelled`) with backwards transition guards.
+- **Configurable Change Window Cutoff:** Configurable cutoff (default 24h; options 12h, 24h, 48h, 72h, custom) calculated in the browser's local timezone.
+- **Schedule Resolution Guard:** Calculates deadlines only when both an exact calendar date (`YYYY-MM-DD`) and fulfillment time (`HH:mm`) are resolved; never invents dates.
+- **Manual Change Request Workflow:** Customers request changes via chat; the baker manually records change proposals in CrumbDesk without silent overwrites. Pending proposals never mutate accepted order data.
+- **Field-Level Diff Comparison:** Compares accepted order vs proposed changes side-by-side, rendering only changed fields with explicit units preserved.
+- **Preparation Lock & Exception Rules:** Transitioning to *In Preparation* immediately locks ordinary changes. Late or in-prep changes require an explicit exception approval, a non-empty baker reason (whitespace-only rejected), and deliberate checkbox confirmation.
+- **Stale Change Protection:** Automatically rejects stale proposals if the accepted order was modified after the request was created.
+- **Persistent Order History:** Records lifecycle milestones, field-level modifications, previous/new values with units, timestamps, and baker reasons across browser refreshes.
 - **Visual Warning Flags:** Highlights missing fields (e.g., unresolved dates, unspecified fulfillment) before confirmation.
 - **Deterministic Customer Reply Drafter:** Generates polite reply templates to ask for missing information in 1 click, with copy-to-clipboard functionality.
 - **Live Order Management Dashboard:** Filter by review status, payment status, and fulfillment method; instant search across customer names, products, and notes.
-- **RFC 4180 CSV Export:** Exports `crumbdesk-orders.csv` with escaped commas, quotes, and newlines.
-- **Local Browser Persistence:** Orders survive refreshes via validated `localStorage` with graceful recovery from corrupt records.
+- **RFC 4180 CSV Export:** Exports `crumbdesk-orders.csv` with escaped commas, quotes, and newlines; suppresses invalid payment values.
+- **Local Browser Persistence:** Orders survive refreshes via validated `localStorage` with safe sanitization of corrupt or negative payment amounts without deleting records.
 - **Sample Demo Dataset:** Optional, clearly tagged demo orders (`[DEMO SAMPLE]`) that can be loaded and wiped in 1 click.
 
 ---
@@ -236,16 +246,16 @@ npm run start
 
 ## 15. How to Run the Tests
 
-### Fast Unit Tests (Vitest)
-Runs focused tests for CSV escaping, Zod schema validation, output parsing, date preservation, and storage recovery:
+### Fast Unit & Domain Policy Tests (Vitest)
+Runs 52 focused tests covering CSV escaping, Zod schema validation, output parsing, date/time resolution, payment data integrity, weight unit preservation, cutoff deadlines, lifecycle transitions, exception safeguards, and storage recovery:
 ```bash
 npm test
 ```
 
 ### Live Gemma 3 4B Integration Tests
-Runs all four core challenge test cases against the live running Next.js server and local Ollama Gemma 3 4B model:
+Runs all six core challenge & regression test cases against the live running Next.js server and local Ollama Gemma 3 4B model:
 ```bash
-# Make sure 'npm run dev' is running in another terminal
+# Make sure 'npm run dev' or 'npm run start' is running in another terminal
 npm run test:ollama
 ```
 
@@ -256,7 +266,36 @@ npm run lint
 
 ---
 
-## 16. Privacy Considerations
+## 16. Order Change Control & Kitchen Governance
+
+CrumbDesk implements a structured kitchen governance and order change control architecture designed for independent home bakery workflows:
+
+```
+[Needs Review] ──► [Confirmed] ──► [In Preparation] ──► [Ready] ──► [Completed]
+       │                   │                 │
+       ▼                   ▼                 ▼
+  [Cancelled]         [Cancelled]       [Cancelled] (Mandatory Kitchen Reason)
+```
+
+### Core Business Rules:
+1. **The Baker Retains Final Authority:** Customers contact the baker over WhatsApp, Instagram, or phone to request modifications. Customer messages do not automatically alter accepted orders, nor does CrumbDesk connect directly to WhatsApp or expose a customer-facing edit portal. The baker manually records requested modifications into CrumbDesk.
+2. **Locked Accepted Orders:** Once an order is confirmed, ordinary direct editing of protected specifications (product, weight, quantity, schedule, preferences, payment) is disabled. To propose alterations, the baker records a *Change Request*.
+3. **Field-Level Diff Inspection:** Before approving any change, CrumbDesk displays a clear comparison of accepted values versus proposed values, highlighting only the fields that actually changed (e.g. `Weight: 500g ➔ 1 kg`).
+4. **Configurable Change Cutoff:**
+   - Default: **24 hours** prior to scheduled fulfillment.
+   - Configurable in Settings (presets: 12h, 24h, 48h, 72h, or custom hours).
+   - Calculated in the browser's local timezone: `fulfillment datetime - cutoff hours`.
+   - **Schedule Resolution Requirement:** Deadlines are only computed when both an exact calendar date (`YYYY-MM-DD`) and fulfillment time (`HH:mm`) are resolved. If either is missing, CrumbDesk displays *"Change deadline unavailable — resolve the fulfillment schedule first"* and never silently assumes an order is inside or outside the window.
+5. **Preparation-Started Lock:**
+   - Transitioning an order to `in_preparation` records `preparation_started_at` and immediately locks ordinary changes, even if the 24-hour cutoff has not passed.
+   - Once preparation starts, any subsequent change requires an explicit exception approval, a clear warning about ingredient and schedule disruption, a mandatory baker reason, and deliberate confirmation.
+6. **Stale Request Protection:** If an accepted order is modified while a change request is pending, approving the stale proposal is blocked to prevent overwriting newer accepted data.
+7. **Single Pending Request Rule:** Only one pending change request is permitted per order at a time to prevent conflicting proposals.
+8. **Permanent Order History:** All lifecycle transitions, customer change proposals, baker decisions, previous/new field values, timestamps, and exception reasons are permanently preserved in the order's history. *(Note: History is persisted in browser localStorage and is an operational audit record, not a tamper-proof cryptographic log).*
+
+---
+
+## 17. Privacy Considerations
 1. **Local-Only Inference:** Customer text is sent solely to `http://127.0.0.1:11434`. No external cloud APIs are called.
 2. **No Tracking or Analytics:** CrumbDesk does not include telemetry, tracking pixels, or third-party cookies.
 3. **No Unencrypted Server Databases:** All order data remains in the user's browser storage.
@@ -265,16 +304,23 @@ npm run lint
 
 ---
 
-## 17. Known Limitations
+## 18. Validation Status & Known Limitations
+
+### Testing & Validation Scope
+- **Synthetic & Representative Order Testing:** Validation has primarily used synthetic, representative customer chat messages reflecting typical informal WhatsApp and Instagram ordering patterns, combined with automated test suites (52 unit and domain policy tests, plus 6 live Ollama integration tests).
+- **Feedback from Potential Users:** We engaged with cottage food makers and hobbyist bakers in Reddit baking communities to understand real-world scheduling pain points, last-minute change conflicts, and why cloud subscription tools fail micro-kitchens.
+- **Pilot & Deployment Status:** We have **not** yet established a completed real-world pilot with a baker or deployed the software into a commercial bakery. CrumbDesk is an open-source functional prototype built for the Hacktoberfest 2026 challenge.
+
+### Known Limitations
 - **Browser localStorage Storage:** Data is stored in the browser's `localStorage`. Clearing browser cookies/cache will clear unexported orders. (Use the **Export CSV** button regularly).
 - **Single-Device Access:** Because orders reside in browser storage, orders created on one laptop will not automatically synchronize to a mobile device.
 - **Hardware-Dependent Latency:** On laptops with 8 GB RAM and no dedicated GPU, Gemma 3 4B takes approximately 2 to 5 seconds per extraction. The UI provides a live progress timer.
 - **Payment Verification:** CrumbDesk intentionally cannot verify actual bank transactions or UPI settlements. It relies on the baker to check their banking app.
-- **Current Status:** Prototype developed for Hacktoberfest 2026. While fully functional, it has not yet undergone live longitudinal trials in a commercial bakery kitchen.
+- **Manual Change Recording:** Because CrumbDesk does not integrate directly with WhatsApp or Instagram APIs, changes requested by customers must be manually recorded by the baker. The application cannot technically prevent a customer from sending change requests in chat apps.
 
 ---
 
-## 18. Troubleshooting Common Ollama Errors
+## 19. Troubleshooting Common Ollama Errors
 
 | Issue | Cause | Solution |
 | :--- | :--- | :--- |
@@ -285,7 +331,7 @@ npm run lint
 
 ---
 
-## 19. Future Improvements
+## 20. Future Improvements
 - **Local SQLite / IndexedDB Storage:** Upgrade storage to IndexedDB or OPFS (Origin Private File System) for larger order volume and attachment storage.
 - **Calendar ICS Export:** Export confirmed pickup and delivery slots directly to Google Calendar or Apple Calendar.
 - **Order Slip Printing:** Format 80mm thermal receipt slips for kitchen prep and cake box labeling.
@@ -293,7 +339,7 @@ npm run lint
 
 ---
 
-## 20. Submission Checklist (Hacktoberfest 2026)
+## 21. Submission Checklist (Hacktoberfest 2026)
 - [x] Application starts cleanly (`npm run dev`)
 - [x] Responsive bakery-themed dashboard with live statistics
 - [x] Real local Gemma 3 4B inference integrated via Ollama
@@ -309,7 +355,12 @@ npm run lint
 - [x] Template-based customer reply drafter with 1-click clipboard copy
 - [x] RFC 4180 CSV export (`crumbdesk-orders.csv`)
 - [x] Sample demo dataset with clear `[DEMO SAMPLE]` identification
-- [x] 14 automated unit tests + live Ollama test suite passing
+- [x] Controlled order lifecycle (`needs_review` -> `confirmed` -> `in_preparation` -> `ready` -> `completed`, `cancelled`)
+- [x] Configurable order change cutoff (default 24h; 12h, 24h, 48h, 72h, custom)
+- [x] Immediate preparation-started edit locks & exceptional approval governance
+- [x] Change request diff comparisons & stale proposal safeguards
+- [x] Persistent order lifecycle and change history surviving page refreshes
+- [x] 52 automated unit & policy tests + 6 live Ollama integration tests passing
 - [x] TypeScript checks pass (`npm run lint`)
 - [x] Production build succeeds (`npm run build`)
 - [x] Zero cloud AI dependencies or paid services required
