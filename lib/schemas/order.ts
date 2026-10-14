@@ -9,7 +9,80 @@ export const paymentStatusSchema = z.enum([
   "unclear",
 ]);
 
-export const orderStatusSchema = z.enum(["needs_review", "confirmed"]);
+export const orderStatusSchema = z.enum([
+  "needs_review",
+  "confirmed",
+  "in_preparation",
+  "ready",
+  "completed",
+  "cancelled",
+]);
+
+export const changeRequestStatusSchema = z.enum([
+  "pending",
+  "approved",
+  "rejected",
+]);
+
+export const deadlineEvaluationStatusSchema = z.enum([
+  "within_window",
+  "past_deadline",
+  "prep_started",
+  "ready",
+  "unresolved_schedule",
+  "terminal",
+]);
+
+export const fieldChangeSchema = z.object({
+  field: z.string(),
+  field_label: z.string(),
+  old_value: z.unknown(),
+  new_value: z.unknown(),
+});
+
+export const changeRequestSchema = z.object({
+  id: z.string().min(1),
+  order_id: z.string().min(1),
+  created_at: z.string(),
+  status: changeRequestStatusSchema.default("pending"),
+  proposed_changes: z.record(z.string(), z.unknown()),
+  original_values: z.record(z.string(), z.unknown()),
+  request_notes: z.string().optional().default(""),
+  deadline_status_at_request: deadlineEvaluationStatusSchema,
+  deadline_at_request: z.string().nullable().default(null),
+  decided_at: z.string().nullable().optional().default(null),
+  decision_reason: z.string().nullable().optional().default(null),
+  is_exception: z.boolean().optional().default(false),
+});
+
+export const orderHistoryEventTypeSchema = z.enum([
+  "order_created",
+  "order_confirmed",
+  "preparation_started",
+  "order_ready",
+  "order_completed",
+  "order_cancelled",
+  "change_requested",
+  "change_approved",
+  "change_rejected",
+  "exception_approved",
+  "baker_note_updated",
+]);
+
+export const orderHistoryEventSchema = z.object({
+  id: z.string().min(1),
+  timestamp: z.string(),
+  type: orderHistoryEventTypeSchema,
+  summary: z.string(),
+  actor: z.enum(["baker", "system"]).optional().default("baker"),
+  change_request_id: z.string().optional(),
+  reason: z.string().optional(),
+  field_changes: z.array(fieldChangeSchema).optional().default([]),
+});
+
+export const orderPolicySettingsSchema = z.object({
+  cutoff_hours: z.number().int().positive().default(24),
+});
 
 export const extractedOrderSchema = z.object({
   customer_name: z.string().nullable().default(null),
@@ -25,7 +98,12 @@ export const extractedOrderSchema = z.object({
   requested_time: z.string().nullable().default(null),
   dietary_preference: z.string().nullable().default(null),
   fulfillment_method: fulfillmentMethodSchema.default("unknown"),
-  payment_amount: z.number().nullable().default(null),
+  payment_amount: z
+    .number({ invalid_type_error: "Payment amount must be a number" })
+    .min(0, "Payment amount cannot be negative")
+    .finite("Payment amount must be a finite number")
+    .nullable()
+    .default(null),
   payment_currency: z.string().nullable().default(null),
   payment_method: z.string().nullable().default(null),
   payment_status: paymentStatusSchema.default("not_mentioned"),
@@ -42,6 +120,10 @@ export const orderSchema = extractedOrderSchema.extend({
   raw_message: z.string().default(""),
   is_demo: z.boolean().optional().default(false),
   baker_notes: z.string().optional().default(""),
+  preparation_started_at: z.string().nullable().optional().default(null),
+  cancellation_reason: z.string().nullable().optional().default(null),
+  change_requests: z.array(changeRequestSchema).default([]),
+  history: z.array(orderHistoryEventSchema).default([]),
 });
 
 export const extractRequestSchema = z.object({

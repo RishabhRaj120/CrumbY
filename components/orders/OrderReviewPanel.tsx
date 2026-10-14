@@ -13,6 +13,12 @@ import {
   Sparkles,
   Save,
   Check,
+  Flame,
+  Award,
+  XCircle,
+  FileEdit,
+  ArrowRight,
+  PlusCircle,
 } from "lucide-react";
 import {
   Order,
@@ -20,10 +26,33 @@ import {
   FulfillmentMethod,
   PaymentStatus,
   OrderStatus,
+  ChangeRequest,
 } from "@/types/order";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
-import { getPaymentStatusBadge, getOrderStatusBadge } from "@/lib/utils";
+import {
+  getPaymentStatusBadge,
+  getOrderStatusBadge,
+  formatDate,
+  formatDateTime,
+} from "@/lib/utils";
+import {
+  evaluateDeadlineStatus,
+  computeOrderFieldDiffs,
+  normalizeWeightValue,
+} from "@/lib/change-policy";
+import { getStoredPolicySettings } from "@/lib/storage/settings";
+import {
+  transitionOrderStatus,
+  recordChangeRequest,
+  approveChangeRequest,
+  rejectChangeRequest,
+  updateBakerNotes,
+} from "@/lib/storage/orders";
+import { OrderHistoryTimeline } from "./OrderHistoryTimeline";
+import { OrderChangeRequestModal } from "./OrderChangeRequestModal";
+import { ChangeRequestApprovalModal } from "./ChangeRequestApprovalModal";
+import { CancelOrderModal } from "./CancelOrderModal";
 
 interface OrderReviewPanelProps {
   initialData: ExtractedOrderPayload | Order;
@@ -42,63 +71,128 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
   onCancel,
   onOpenDraftReply,
 }) => {
-  // Editable form state initialized from extracted data
+  // If it's an existing order with an ID, we keep the live order object in state
+  const [currentOrder, setCurrentOrder] = useState<Order>(() => {
+    if ("id" in initialData) {
+      const existing = { ...(initialData as Order) };
+      existing.weight = normalizeWeightValue(existing.weight);
+      if (
+        typeof existing.payment_amount === "number" &&
+        (existing.payment_amount < 0 || !isFinite(existing.payment_amount))
+      ) {
+        existing.payment_amount = null;
+      }
+      return existing;
+    }
+    // Synthetic unsaved order
+    const safeAmount =
+      typeof initialData.payment_amount === "number" &&
+      initialData.payment_amount >= 0 &&
+      isFinite(initialData.payment_amount)
+        ? initialData.payment_amount
+        : null;
+
+    return {
+      id: `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      status: "needs_review",
+      raw_message: rawMessage,
+      customer_name: initialData.customer_name || null,
+      product: initialData.product || null,
+      quantity: initialData.quantity ?? null,
+      weight: normalizeWeightValue(initialData.weight),
+      requested_date: initialData.requested_date || null,
+      resolved_date: initialData.resolved_date || null,
+      requested_time: initialData.requested_time || null,
+      dietary_preference: initialData.dietary_preference || null,
+      fulfillment_method: initialData.fulfillment_method || "unknown",
+      payment_amount: safeAmount,
+      payment_currency: initialData.payment_currency || "INR",
+      payment_method: initialData.payment_method || null,
+      payment_status: initialData.payment_status || "not_mentioned",
+      notes: initialData.notes || [],
+      missing_or_unverified: initialData.missing_or_unverified || [],
+      requires_confirmation: initialData.requires_confirmation ?? true,
+      change_requests: [],
+      history: [],
+    };
+  });
+
+  const isConfirmedOrLater = currentOrder.status !== "needs_review";
+
+  // Editable form state for needs_review orders
   const [customerName, setCustomerName] = useState(
-    initialData.customer_name || ""
+    currentOrder.customer_name || ""
   );
-  const [product, setProduct] = useState(initialData.product || "");
+  const [product, setProduct] = useState(currentOrder.product || "");
   const [quantity, setQuantity] = useState<string>(
-    initialData.quantity !== null && initialData.quantity !== undefined
-      ? String(initialData.quantity)
+    currentOrder.quantity !== null && currentOrder.quantity !== undefined
+      ? String(currentOrder.quantity)
       : ""
   );
-  const [weight, setWeight] = useState(initialData.weight || "");
+  const [weight, setWeight] = useState(currentOrder.weight || "");
   const [requestedDate, setRequestedDate] = useState(
-    initialData.requested_date || ""
+    currentOrder.requested_date || ""
   );
   const [resolvedDate, setResolvedDate] = useState(
-    initialData.resolved_date || ""
+    currentOrder.resolved_date || ""
   );
   const [requestedTime, setRequestedTime] = useState(
-    initialData.requested_time || ""
+    currentOrder.requested_time || ""
   );
   const [dietaryPreference, setDietaryPreference] = useState(
-    initialData.dietary_preference || ""
+    currentOrder.dietary_preference || ""
   );
   const [fulfillmentMethod, setFulfillmentMethod] = useState<FulfillmentMethod>(
-    initialData.fulfillment_method || "unknown"
+    currentOrder.fulfillment_method || "unknown"
   );
   const [paymentAmount, setPaymentAmount] = useState<string>(
-    initialData.payment_amount !== null &&
-      initialData.payment_amount !== undefined
-      ? String(initialData.payment_amount)
+    currentOrder.payment_amount !== null &&
+      currentOrder.payment_amount !== undefined
+      ? String(currentOrder.payment_amount)
       : ""
   );
   const [paymentCurrency, setPaymentCurrency] = useState(
-    initialData.payment_currency || "INR"
+    currentOrder.payment_currency || "INR"
   );
   const [paymentMethod, setPaymentMethod] = useState(
-    initialData.payment_method || ""
+    currentOrder.payment_method || ""
   );
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>(
-    initialData.payment_status || "not_mentioned"
+    currentOrder.payment_status || "not_mentioned"
   );
   const [notesStr, setNotesStr] = useState(
-    Array.isArray(initialData.notes) ? initialData.notes.join("\n") : ""
+    Array.isArray(currentOrder.notes) ? currentOrder.notes.join("\n") : ""
   );
   const [missingItemsStr, setMissingItemsStr] = useState(
-    Array.isArray(initialData.missing_or_unverified)
-      ? initialData.missing_or_unverified.join("\n")
+    Array.isArray(currentOrder.missing_or_unverified)
+      ? currentOrder.missing_or_unverified.join("\n")
       : ""
   );
-  const [bakerNotes, setBakerNotes] = useState(
-    "baker_notes" in initialData ? initialData.baker_notes || "" : ""
+  const [bakerNotesInput, setBakerNotesInput] = useState(
+    currentOrder.baker_notes || ""
   );
-  const [currentStatus, setCurrentStatus] = useState<OrderStatus>(
-    "status" in initialData ? initialData.status : "needs_review"
+  const [bakerNotesSavedMsg, setBakerNotesSavedMsg] = useState(false);
+
+  // Sub-modals
+  const [showWarningModal, setShowWarningModal] = useState(false);
+  const [isRecordChangeModalOpen, setIsRecordChangeModalOpen] = useState(false);
+  const [reviewingChangeRequest, setReviewingChangeRequest] =
+    useState<ChangeRequest | null>(null);
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+  const [panelErrorMsg, setPanelErrorMsg] = useState<string | null>(null);
+
+  // Policy & Deadline Evaluation
+  const policySettings = getStoredPolicySettings();
+  const deadlineEval = evaluateDeadlineStatus(
+    currentOrder,
+    policySettings.cutoff_hours
   );
 
-  const [showWarningModal, setShowWarningModal] = useState(false);
+  const pendingChangeRequest = (currentOrder.change_requests || []).find(
+    (r) => r.status === "pending"
+  );
 
   // Parse notes and missing items arrays
   const missingItemsList = missingItemsStr
@@ -115,31 +209,34 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
     paymentStatus === "unclear";
 
   const constructOrderObject = (finalStatus: OrderStatus): Order => {
-    const existingId = "id" in initialData ? initialData.id : null;
-    const existingCreatedAt =
-      "created_at" in initialData ? initialData.created_at : null;
-
     const parsedQty = quantity.trim() ? parseFloat(quantity) : null;
     const parsedAmount = paymentAmount.trim()
       ? parseFloat(paymentAmount)
       : null;
 
+    const safePaymentAmount =
+      parsedAmount !== null &&
+      !isNaN(parsedAmount) &&
+      isFinite(parsedAmount) &&
+      parsedAmount >= 0
+        ? parsedAmount
+        : null;
+
     return {
-      id: existingId || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      created_at: existingCreatedAt || new Date().toISOString(),
+      ...currentOrder,
       updated_at: new Date().toISOString(),
       status: finalStatus,
       raw_message: rawMessage,
       customer_name: customerName.trim() || null,
       product: product.trim() || null,
       quantity: isNaN(Number(parsedQty)) ? null : parsedQty,
-      weight: weight.trim() || null,
+      weight: normalizeWeightValue(weight),
       requested_date: requestedDate.trim() || null,
       resolved_date: resolvedDate.trim() || null,
       requested_time: requestedTime.trim() || null,
       dietary_preference: dietaryPreference.trim() || null,
       fulfillment_method: fulfillmentMethod,
-      payment_amount: isNaN(Number(parsedAmount)) ? null : parsedAmount,
+      payment_amount: safePaymentAmount,
       payment_currency: paymentCurrency.trim() || null,
       payment_method: paymentMethod.trim() || null,
       payment_status: paymentStatus,
@@ -149,17 +246,31 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
         .filter(Boolean),
       missing_or_unverified: missingItemsList,
       requires_confirmation: missingItemsList.length > 0,
-      baker_notes: bakerNotes.trim() || undefined,
-      is_demo: "is_demo" in initialData ? initialData.is_demo : false,
+      baker_notes: bakerNotesInput.trim() || undefined,
     };
   };
 
+  const validatePaymentInput = (): boolean => {
+    if (paymentAmount.trim()) {
+      const parsed = parseFloat(paymentAmount);
+      if (isNaN(parsed) || !isFinite(parsed) || parsed < 0) {
+        setPanelErrorMsg("Payment amount cannot be negative or invalid.");
+        return false;
+      }
+    }
+    return true;
+  };
+
   const handleSaveAsNeedsReview = () => {
+    setPanelErrorMsg(null);
+    if (!validatePaymentInput()) return;
     const order = constructOrderObject("needs_review");
     onSave(order);
   };
 
   const handleAttemptConfirm = () => {
+    setPanelErrorMsg(null);
+    if (!validatePaymentInput()) return;
     if (hasUncertainties) {
       setShowWarningModal(true);
     } else {
@@ -173,8 +284,104 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
     onSave(order);
   };
 
-  const paymentBadge = getPaymentStatusBadge(paymentStatus);
-  const statusBadge = getOrderStatusBadge(currentStatus);
+  // Lifecycle Transitions for confirmed orders
+  const handleTransition = (
+    newStatus: OrderStatus,
+    options?: { reason?: string }
+  ) => {
+    setPanelErrorMsg(null);
+    try {
+      const updated = transitionOrderStatus(
+        currentOrder.id,
+        newStatus,
+        options
+      );
+      setCurrentOrder(updated);
+      onSave(updated);
+    } catch (err) {
+      setPanelErrorMsg(
+        err instanceof Error ? err.message : "Failed to transition status."
+      );
+    }
+  };
+
+  // Record Change Request
+  const handleRecordChangeRequest = (
+    proposed: Partial<ExtractedOrderPayload>,
+    notes: string
+  ) => {
+    setPanelErrorMsg(null);
+    try {
+      const result = recordChangeRequest(currentOrder.id, proposed, notes);
+      setCurrentOrder(result.order);
+      onSave(result.order);
+    } catch (err) {
+      setPanelErrorMsg(
+        err instanceof Error ? err.message : "Failed to record change request."
+      );
+    }
+  };
+
+  // Approve Change Request
+  const handleApproveChange = (options?: {
+    isException?: boolean;
+    reason?: string;
+  }) => {
+    if (!reviewingChangeRequest) return;
+    setPanelErrorMsg(null);
+    try {
+      const updated = approveChangeRequest(
+        currentOrder.id,
+        reviewingChangeRequest.id,
+        options
+      );
+      setCurrentOrder(updated);
+      setReviewingChangeRequest(null);
+      onSave(updated);
+    } catch (err) {
+      setPanelErrorMsg(
+        err instanceof Error ? err.message : "Failed to approve change request."
+      );
+    }
+  };
+
+  // Reject Change Request
+  const handleRejectChange = (reason?: string) => {
+    if (!reviewingChangeRequest) return;
+    setPanelErrorMsg(null);
+    try {
+      const updated = rejectChangeRequest(
+        currentOrder.id,
+        reviewingChangeRequest.id,
+        reason
+      );
+      setCurrentOrder(updated);
+      setReviewingChangeRequest(null);
+      onSave(updated);
+    } catch (err) {
+      setPanelErrorMsg(
+        err instanceof Error ? err.message : "Failed to reject change request."
+      );
+    }
+  };
+
+  // Save Baker Internal Notes
+  const handleSaveBakerNotes = () => {
+    try {
+      const updated = updateBakerNotes(currentOrder.id, bakerNotesInput);
+      setCurrentOrder(updated);
+      onSave(updated);
+      setBakerNotesSavedMsg(true);
+      setTimeout(() => setBakerNotesSavedMsg(false), 2500);
+    } catch (err) {
+      setPanelErrorMsg(
+        err instanceof Error ? err.message : "Failed to update notes."
+      );
+    }
+  };
+
+  const paymentBadge = getPaymentStatusBadge(currentOrder.payment_status);
+  const statusBadge = getOrderStatusBadge(currentOrder.status);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-crumb-espresso/50 backdrop-blur-sm animate-in fade-in duration-150">
@@ -188,17 +395,36 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-crumb-espresso font-serif">
-                  {isExistingOrder ? "Order Details & Review" : "Review Extracted Order"}
+                  {isExistingOrder
+                    ? `Order Details — ${currentOrder.id}`
+                    : "Review Extracted Order"}
                 </h2>
                 <Badge
-                  variant={currentStatus === "confirmed" ? "success" : "warning"}
+                  variant={
+                    currentOrder.status === "confirmed"
+                      ? "success"
+                      : currentOrder.status === "in_preparation"
+                      ? "terracotta"
+                      : currentOrder.status === "ready"
+                      ? "neutral"
+                      : currentOrder.status === "cancelled"
+                      ? "danger"
+                      : "warning"
+                  }
                   dot
                 >
                   {statusBadge.label}
                 </Badge>
+                {pendingChangeRequest && (
+                  <Badge variant="warning" size="sm">
+                    Pending Change
+                  </Badge>
+                )}
               </div>
               <p className="text-xs text-crumb-muted">
-                Inspect and modify AI-extracted fields before confirming.
+                {isConfirmedOrLater
+                  ? "Accepted Order under Baker Change Control. Ordinary field edits require a change request."
+                  : "Inspect and modify AI-extracted fields before confirming."}
               </p>
             </div>
           </div>
@@ -211,10 +437,178 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
           </button>
         </div>
 
-        {/* Content Body: Two Columns */}
+        {/* Error notification */}
+        {panelErrorMsg && (
+          <div className="mx-6 mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              <span>{panelErrorMsg}</span>
+            </div>
+            <button
+              onClick={() => setPanelErrorMsg(null)}
+              className="text-rose-500 hover:text-rose-800"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Lifecycle & Policy Banner for Confirmed / Active Orders */}
+        {isConfirmedOrLater && (
+          <div className="px-6 py-3.5 bg-crumb-surface-alt/70 border-b border-crumb-border text-xs flex flex-wrap items-center justify-between gap-3">
+            {/* Left: Deadline & Policy status */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-crumb-espresso">
+                Change Policy:
+              </span>
+              <span className="text-crumb-muted">{deadlineEval.message}</span>
+            </div>
+
+            {/* Right: Lifecycle Progression Actions */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {currentOrder.status === "confirmed" && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleTransition("in_preparation")}
+                    className="border-orange-300 text-orange-800 hover:bg-orange-50"
+                    leftIcon={<Flame className="w-3.5 h-3.5 text-orange-600" />}
+                  >
+                    Start Preparation
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsCancelModalOpen(true)}
+                    className="text-rose-600 hover:bg-rose-50"
+                  >
+                    Cancel Order
+                  </Button>
+                </>
+              )}
+
+              {currentOrder.status === "in_preparation" && (
+                <>
+                  <div className="flex items-center gap-1.5 text-orange-800 font-medium px-2 py-1 rounded bg-orange-100/70">
+                    <Flame className="w-3.5 h-3.5" />
+                    <span>Prep Started</span>
+                    {currentOrder.preparation_started_at && (
+                      <span className="font-mono text-[10px] text-orange-700">
+                        ({formatDateTime(currentOrder.preparation_started_at)})
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleTransition("ready")}
+                    className="border-emerald-300 text-emerald-800 hover:bg-emerald-50"
+                    leftIcon={<Check className="w-3.5 h-3.5 text-emerald-600" />}
+                  >
+                    Mark Ready
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsCancelModalOpen(true)}
+                    className="text-rose-600 hover:bg-rose-50"
+                  >
+                    Cancel Order
+                  </Button>
+                </>
+              )}
+
+              {currentOrder.status === "ready" && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => handleTransition("completed")}
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                  leftIcon={<Award className="w-3.5 h-3.5" />}
+                >
+                  Mark Completed
+                </Button>
+              )}
+
+              {currentOrder.status === "completed" && (
+                <span className="px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 border border-purple-200 font-semibold text-[11px] flex items-center gap-1">
+                  <Award className="w-3.5 h-3.5" />
+                  <span>Order Completed</span>
+                </span>
+              )}
+
+              {currentOrder.status === "cancelled" && (
+                <span className="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 font-semibold text-[11px] flex items-center gap-1">
+                  <XCircle className="w-3.5 h-3.5" />
+                  <span>Order Cancelled</span>
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Content Body: Scrollable */}
         <div className="p-6 overflow-y-auto space-y-6">
-          {/* Missing / Unverified Details Banner */}
-          {missingItemsList.length > 0 && (
+          {/* Active Pending Change Request Banner */}
+          {pendingChangeRequest && (
+            <div className="p-4 rounded-xl bg-amber-50/90 border border-amber-300 space-y-3 shadow-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-amber-700 flex-shrink-0" />
+                  <span className="font-bold text-amber-900 text-xs uppercase tracking-wider">
+                    Customer Change Request Awaiting Baker Decision
+                  </span>
+                </div>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setReviewingChangeRequest(pendingChangeRequest)}
+                  className="bg-amber-600 hover:bg-amber-700 text-white"
+                  leftIcon={<Check className="w-3.5 h-3.5" />}
+                >
+                  Review & Decide
+                </Button>
+              </div>
+
+              {pendingChangeRequest.request_notes && (
+                <p className="text-xs text-amber-950 italic bg-white/70 p-2 rounded-lg border border-amber-200">
+                  Context: &ldquo;{pendingChangeRequest.request_notes}&rdquo;
+                </p>
+              )}
+
+              <div className="text-xs text-amber-900 space-y-1">
+                <span className="font-semibold text-[11px] uppercase tracking-wider block">
+                  Proposed Changes:
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 font-mono text-[11px]">
+                  {computeOrderFieldDiffs(
+                    currentOrder,
+                    pendingChangeRequest.proposed_changes
+                  ).map((diff) => (
+                    <div
+                      key={diff.field}
+                      className="flex items-center gap-1.5 bg-white/80 p-1 rounded border border-amber-200"
+                    >
+                      <span className="font-sans font-semibold text-crumb-espresso">
+                        {diff.field_label}:
+                      </span>
+                      <span className="line-through text-crumb-subtle">
+                        {String(diff.old_value ?? "—")}
+                      </span>
+                      <ArrowRight className="w-3 h-3 text-amber-700 flex-shrink-0" />
+                      <span className="font-bold text-emerald-800">
+                        {String(diff.new_value ?? "—")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Missing / Unverified Details Banner (for needs_review) */}
+          {!isConfirmedOrLater && missingItemsList.length > 0 && (
             <div className="p-4 rounded-xl bg-crumb-amber-light/80 border border-crumb-amber/30 text-xs text-crumb-espresso space-y-2">
               <div className="flex items-center gap-2 font-semibold text-crumb-amber">
                 <AlertTriangle className="w-4 h-4 flex-shrink-0" />
@@ -242,7 +636,7 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
               </span>
             </div>
             <p className="font-mono text-crumb-espresso bg-white/70 p-2.5 rounded-lg border border-crumb-border/70 whitespace-pre-wrap leading-relaxed">
-              {rawMessage || "(No raw message text stored)"}
+              {currentOrder.raw_message || "(No raw message text stored)"}
             </p>
           </div>
 
@@ -250,9 +644,16 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {/* Left Column: Product & Customer */}
             <div className="space-y-4">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-crumb-terracotta border-b border-crumb-border pb-1">
-                Order & Customer
-              </h3>
+              <div className="flex items-center justify-between border-b border-crumb-border pb-1">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-crumb-terracotta">
+                  Accepted Order Specifications
+                </h3>
+                {isConfirmedOrLater && (
+                  <span className="text-[10px] text-crumb-subtle italic">
+                    Protected (Change request required)
+                  </span>
+                )}
+              </div>
 
               <div>
                 <label className="block text-xs font-medium text-crumb-espresso mb-1">
@@ -260,26 +661,28 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
                 </label>
                 <input
                   type="text"
-                  value={customerName}
+                  disabled={isConfirmedOrLater}
+                  value={isConfirmedOrLater ? currentOrder.customer_name || "" : customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                   placeholder="e.g. Priya Sharma (if stated)"
-                  className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border focus:border-crumb-terracotta focus:ring-1 focus:ring-crumb-terracotta/40 outline-none"
+                  className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-medium text-crumb-espresso mb-1">
-                  Product / Flavor <span className="text-red-500">*</span>
+                  Product / Flavor {!isConfirmedOrLater && <span className="text-red-500">*</span>}
                 </label>
                 <input
                   type="text"
-                  value={product}
+                  disabled={isConfirmedOrLater}
+                  value={isConfirmedOrLater ? currentOrder.product || "" : product}
                   onChange={(e) => setProduct(e.target.value)}
                   placeholder="e.g. Chocolate truffle cake"
-                  className={`w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border outline-none ${
-                    !product
+                  className={`w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none ${
+                    !product && !isConfirmedOrLater
                       ? "border-amber-400 bg-amber-50/20"
-                      : "border-crumb-border focus:border-crumb-terracotta focus:ring-1 focus:ring-crumb-terracotta/40"
+                      : "border-crumb-border focus:border-crumb-terracotta"
                   }`}
                 />
               </div>
@@ -293,10 +696,17 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
                     type="number"
                     min="0"
                     step="1"
-                    value={quantity}
+                    disabled={isConfirmedOrLater}
+                    value={
+                      isConfirmedOrLater
+                        ? currentOrder.quantity !== null && currentOrder.quantity !== undefined
+                          ? String(currentOrder.quantity)
+                          : ""
+                        : quantity
+                    }
                     onChange={(e) => setQuantity(e.target.value)}
                     placeholder="e.g. 1"
-                    className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border focus:border-crumb-terracotta outline-none"
+                    className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none"
                   />
                 </div>
                 <div>
@@ -305,10 +715,11 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
                   </label>
                   <input
                     type="text"
-                    value={weight}
+                    disabled={isConfirmedOrLater}
+                    value={isConfirmedOrLater ? currentOrder.weight || "" : weight}
                     onChange={(e) => setWeight(e.target.value)}
                     placeholder="e.g. 1 kg, 500g"
-                    className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border focus:border-crumb-terracotta outline-none"
+                    className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none"
                   />
                 </div>
               </div>
@@ -319,10 +730,15 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
                 </label>
                 <input
                   type="text"
-                  value={dietaryPreference}
+                  disabled={isConfirmedOrLater}
+                  value={
+                    isConfirmedOrLater
+                      ? currentOrder.dietary_preference || ""
+                      : dietaryPreference
+                  }
                   onChange={(e) => setDietaryPreference(e.target.value)}
                   placeholder="e.g. Eggless, Vegan, Gluten-free"
-                  className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border focus:border-crumb-terracotta outline-none"
+                  className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none"
                 />
               </div>
 
@@ -331,21 +747,47 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
                   Fulfillment Method
                 </label>
                 <select
-                  value={fulfillmentMethod}
+                  disabled={isConfirmedOrLater}
+                  value={
+                    isConfirmedOrLater
+                      ? currentOrder.fulfillment_method
+                      : fulfillmentMethod
+                  }
                   onChange={(e) =>
                     setFulfillmentMethod(e.target.value as FulfillmentMethod)
                   }
-                  className={`w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border outline-none ${
-                    fulfillmentMethod === "unknown"
-                      ? "border-amber-400 bg-amber-50/20"
-                      : "border-crumb-border focus:border-crumb-terracotta"
-                  }`}
+                  className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none"
                 >
                   <option value="pickup">Pickup</option>
                   <option value="delivery">Delivery</option>
                   <option value="unknown">Unknown (Needs Confirmation)</option>
                 </select>
               </div>
+
+              {/* Action to record change request on confirmed orders */}
+              {isConfirmedOrLater &&
+                currentOrder.status !== "completed" &&
+                currentOrder.status !== "cancelled" && (
+                  <div className="pt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsRecordChangeModalOpen(true)}
+                      disabled={Boolean(pendingChangeRequest)}
+                      className="w-full justify-center border-crumb-terracotta/40 text-crumb-terracotta hover:bg-crumb-terracotta-light"
+                      leftIcon={<PlusCircle className="w-4 h-4" />}
+                      title={
+                        pendingChangeRequest
+                          ? "Resolve the pending change request before recording another."
+                          : "Record a customer change request"
+                      }
+                    >
+                      {pendingChangeRequest
+                        ? "Pending Change Request Active"
+                        : "Record Customer Change Request"}
+                    </Button>
+                  </div>
+                )}
             </div>
 
             {/* Right Column: Schedule & Payment */}
@@ -356,14 +798,19 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-medium text-crumb-espresso mb-1">
-                  Requested Date (Customer&apos;s Words)
+                  Requested Date (Customer Stated)
                 </label>
                 <input
                   type="text"
-                  value={requestedDate}
+                  disabled={isConfirmedOrLater}
+                  value={
+                    isConfirmedOrLater
+                      ? currentOrder.requested_date || ""
+                      : requestedDate
+                  }
                   onChange={(e) => setRequestedDate(e.target.value)}
                   placeholder="e.g. Sunday evening"
-                  className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border focus:border-crumb-terracotta outline-none"
+                  className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none"
                 />
               </div>
 
@@ -374,15 +821,16 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
                   </label>
                   <input
                     type="date"
-                    value={resolvedDate}
+                    disabled={isConfirmedOrLater}
+                    value={
+                      isConfirmedOrLater
+                        ? currentOrder.resolved_date || ""
+                        : resolvedDate
+                    }
                     onChange={(e) => setResolvedDate(e.target.value)}
-                    className={`w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border outline-none ${
-                      !resolvedDate
-                        ? "border-amber-300"
-                        : "border-crumb-border focus:border-crumb-terracotta"
-                    }`}
+                    className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none"
                   />
-                  {!resolvedDate && (
+                  {!currentOrder.resolved_date && (
                     <span className="text-[10px] text-amber-700 mt-0.5 block">
                       Needs calendar confirmation
                     </span>
@@ -391,14 +839,19 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
 
                 <div>
                   <label className="block text-xs font-medium text-crumb-espresso mb-1">
-                    Time (HH:mm / stated)
+                    Time (HH:mm)
                   </label>
                   <input
                     type="text"
-                    value={requestedTime}
+                    disabled={isConfirmedOrLater}
+                    value={
+                      isConfirmedOrLater
+                        ? currentOrder.requested_time || ""
+                        : requestedTime
+                    }
                     onChange={(e) => setRequestedTime(e.target.value)}
                     placeholder="e.g. 18:00"
-                    className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border focus:border-crumb-terracotta outline-none"
+                    className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg bg-crumb-surface border border-crumb-border disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none"
                   />
                 </div>
               </div>
@@ -425,11 +878,33 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
                     <input
                       type="number"
                       step="any"
-                      value={paymentAmount}
+                      min="0"
+                      disabled={isConfirmedOrLater}
+                      value={
+                        isConfirmedOrLater
+                          ? currentOrder.payment_amount !== null &&
+                            currentOrder.payment_amount !== undefined
+                            ? String(currentOrder.payment_amount)
+                            : ""
+                          : paymentAmount
+                      }
                       onChange={(e) => setPaymentAmount(e.target.value)}
                       placeholder="e.g. 1200"
-                      className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-crumb-surface border border-crumb-border outline-none focus:border-crumb-terracotta"
+                      className={`w-full text-xs px-2.5 py-1.5 rounded-lg bg-crumb-surface border ${
+                        !isConfirmedOrLater &&
+                        paymentAmount.trim() &&
+                        (parseFloat(paymentAmount) < 0 || isNaN(parseFloat(paymentAmount)))
+                          ? "border-rose-400 focus:border-rose-500"
+                          : "border-crumb-border"
+                      } disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none`}
                     />
+                    {!isConfirmedOrLater &&
+                      paymentAmount.trim() &&
+                      (parseFloat(paymentAmount) < 0 || isNaN(parseFloat(paymentAmount))) && (
+                        <span className="text-[10px] text-rose-600 font-medium mt-1 block">
+                          Payment amount cannot be negative.
+                        </span>
+                      )}
                   </div>
                   <div>
                     <label className="block text-[11px] font-medium text-crumb-espresso mb-1">
@@ -437,10 +912,14 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
                     </label>
                     <input
                       type="text"
-                      value={paymentCurrency}
+                      disabled={isConfirmedOrLater}
+                      value={
+                        isConfirmedOrLater
+                          ? currentOrder.payment_currency || "INR"
+                          : paymentCurrency
+                      }
                       onChange={(e) => setPaymentCurrency(e.target.value)}
-                      placeholder="INR"
-                      className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-crumb-surface border border-crumb-border outline-none focus:border-crumb-terracotta"
+                      className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-crumb-surface border border-crumb-border disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none"
                     />
                   </div>
                 </div>
@@ -452,22 +931,32 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
                     </label>
                     <input
                       type="text"
-                      value={paymentMethod}
+                      disabled={isConfirmedOrLater}
+                      value={
+                        isConfirmedOrLater
+                          ? currentOrder.payment_method || ""
+                          : paymentMethod
+                      }
                       onChange={(e) => setPaymentMethod(e.target.value)}
                       placeholder="e.g. GPay, Cash"
-                      className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-crumb-surface border border-crumb-border outline-none focus:border-crumb-terracotta"
+                      className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-crumb-surface border border-crumb-border disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none"
                     />
                   </div>
                   <div>
                     <label className="block text-[11px] font-medium text-crumb-espresso mb-1">
-                      Customer Payment Status
+                      Reported Status
                     </label>
                     <select
-                      value={paymentStatus}
+                      disabled={isConfirmedOrLater}
+                      value={
+                        isConfirmedOrLater
+                          ? currentOrder.payment_status
+                          : paymentStatus
+                      }
                       onChange={(e) =>
                         setPaymentStatus(e.target.value as PaymentStatus)
                       }
-                      className="w-full text-xs px-2 py-1.5 rounded-lg bg-crumb-surface border border-crumb-border outline-none focus:border-crumb-terracotta"
+                      className="w-full text-xs px-2 py-1.5 rounded-lg bg-crumb-surface border border-crumb-border disabled:bg-crumb-surface-alt/60 disabled:text-crumb-espresso outline-none"
                     >
                       <option value="customer_reported_paid">
                         Reported Paid
@@ -480,42 +969,47 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
                     </select>
                   </div>
                 </div>
-
-                <p className="text-[10px] text-crumb-subtle italic">
-                  Note: CrumbDesk records customer-reported status only. Verify transactions in your actual bank/UPI app.
-                </p>
               </div>
 
-              {/* Notes & Missing Details */}
-              <div className="space-y-2">
-                <div>
-                  <label className="block text-xs font-medium text-crumb-espresso mb-1">
-                    Missing Details to Clarify (One per line)
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={missingItemsStr}
-                    onChange={(e) => setMissingItemsStr(e.target.value)}
-                    placeholder="e.g. Exact calendar date&#10;Pickup time"
-                    className="w-full text-xs px-3 py-1.5 rounded-lg bg-crumb-surface border border-crumb-border outline-none focus:border-crumb-terracotta resize-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-crumb-espresso mb-1">
+              {/* Baker Internal Notes (Directly Editable Even for Confirmed Orders!) */}
+              <div className="space-y-1.5 p-3 rounded-xl bg-crumb-surface-alt/40 border border-crumb-border">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-crumb-espresso">
                     Baker Internal Notes
                   </label>
-                  <textarea
-                    rows={2}
-                    value={bakerNotes}
-                    onChange={(e) => setBakerNotes(e.target.value)}
-                    placeholder="Private notes (e.g. allergy precautions, box size, ribbon color)"
-                    className="w-full text-xs px-3 py-1.5 rounded-lg bg-crumb-surface border border-crumb-border outline-none focus:border-crumb-terracotta resize-none"
-                  />
+                  {isConfirmedOrLater && (
+                    <button
+                      type="button"
+                      onClick={handleSaveBakerNotes}
+                      className="text-[11px] text-crumb-terracotta hover:text-crumb-terracotta-hover font-semibold flex items-center gap-1"
+                    >
+                      <Save className="w-3 h-3" />
+                      <span>Save Notes</span>
+                    </button>
+                  )}
                 </div>
+                <textarea
+                  rows={2}
+                  value={bakerNotesInput}
+                  onChange={(e) => setBakerNotesInput(e.target.value)}
+                  placeholder="Private notes (e.g. allergy precautions, box size, ribbon color)"
+                  className="w-full text-xs px-3 py-1.5 rounded-lg bg-crumb-surface border border-crumb-border outline-none focus:border-crumb-terracotta resize-none"
+                />
+                {bakerNotesSavedMsg && (
+                  <span className="text-[10px] text-emerald-700 font-semibold block">
+                    ✓ Internal notes updated.
+                  </span>
+                )}
               </div>
             </div>
           </div>
+
+          {/* Persistent Order History Timeline */}
+          {currentOrder.history && currentOrder.history.length > 0 && (
+            <div className="pt-4 border-t border-crumb-border">
+              <OrderHistoryTimeline events={currentOrder.history} />
+            </div>
+          )}
         </div>
 
         {/* Action Footer */}
@@ -526,7 +1020,7 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
                 variant="outline"
                 size="sm"
                 onClick={() =>
-                  onOpenDraftReply(constructOrderObject(currentStatus))
+                  onOpenDraftReply(constructOrderObject(currentOrder.status))
                 }
                 leftIcon={<MessageSquare className="w-4 h-4 text-crumb-terracotta" />}
                 title="Generate reply text to ask customer for missing details"
@@ -538,29 +1032,34 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
 
           <div className="flex items-center gap-2.5">
             <Button variant="outline" size="md" onClick={onCancel}>
-              Cancel
+              {isConfirmedOrLater ? "Close" : "Cancel"}
             </Button>
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={handleSaveAsNeedsReview}
-              leftIcon={<Save className="w-4 h-4" />}
-            >
-              Save as Needs Review
-            </Button>
-            <Button
-              variant="primary"
-              size="md"
-              onClick={handleAttemptConfirm}
-              leftIcon={<Check className="w-4 h-4" />}
-            >
-              Confirm Order
-            </Button>
+
+            {!isConfirmedOrLater && (
+              <>
+                <Button
+                  variant="secondary"
+                  size="md"
+                  onClick={handleSaveAsNeedsReview}
+                  leftIcon={<Save className="w-4 h-4" />}
+                >
+                  Save as Needs Review
+                </Button>
+                <Button
+                  variant="primary"
+                  size="md"
+                  onClick={handleAttemptConfirm}
+                  leftIcon={<Check className="w-4 h-4" />}
+                >
+                  Confirm Order
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Confirmation Warning Modal */}
+      {/* Confirmation Warning Modal (For needs_review orders with uncertainties) */}
       {showWarningModal && (
         <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-crumb-espresso/60 backdrop-blur-sm animate-in fade-in">
           <div className="bg-crumb-surface border border-crumb-border rounded-xl max-w-md w-full p-5 shadow-modal space-y-4">
@@ -610,6 +1109,40 @@ export const OrderReviewPanel: React.FC<OrderReviewPanelProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Record Change Request Modal */}
+      {isRecordChangeModalOpen && (
+        <OrderChangeRequestModal
+          order={currentOrder}
+          isOpen={isRecordChangeModalOpen}
+          onClose={() => setIsRecordChangeModalOpen(false)}
+          onSubmit={handleRecordChangeRequest}
+        />
+      )}
+
+      {/* Change Request Approval / Rejection Modal */}
+      {reviewingChangeRequest && (
+        <ChangeRequestApprovalModal
+          order={currentOrder}
+          request={reviewingChangeRequest}
+          isOpen={Boolean(reviewingChangeRequest)}
+          onClose={() => setReviewingChangeRequest(null)}
+          onApprove={handleApproveChange}
+          onReject={handleRejectChange}
+        />
+      )}
+
+      {/* Cancel Order Modal */}
+      {isCancelModalOpen && (
+        <CancelOrderModal
+          order={currentOrder}
+          isOpen={isCancelModalOpen}
+          onClose={() => setIsCancelModalOpen(false)}
+          onConfirmCancel={(orderId, reason) =>
+            handleTransition("cancelled", { reason })
+          }
+        />
       )}
     </div>
   );

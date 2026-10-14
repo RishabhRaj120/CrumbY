@@ -51,10 +51,100 @@ export function getOrderStatusBadge(status: OrderStatus) {
         bg: "bg-crumb-sage-light text-crumb-sage border-crumb-sage/30",
         dot: "bg-crumb-sage",
       };
+    case "in_preparation":
+      return {
+        label: "In Preparation",
+        bg: "bg-crumb-terracotta-light text-crumb-terracotta border-crumb-terracotta/30",
+        dot: "bg-crumb-terracotta",
+      };
+    case "ready":
+      return {
+        label: "Ready for Pickup",
+        bg: "bg-emerald-50 text-emerald-700 border-emerald-200",
+        dot: "bg-emerald-600",
+      };
+    case "completed":
+      return {
+        label: "Completed",
+        bg: "bg-purple-50 text-purple-700 border-purple-200",
+        dot: "bg-purple-600",
+      };
+    case "cancelled":
+      return {
+        label: "Cancelled",
+        bg: "bg-rose-50 text-rose-700 border-rose-200",
+        dot: "bg-rose-600",
+      };
     case "needs_review":
     default:
       return {
         label: "Needs Review",
+        bg: "bg-crumb-amber-light text-crumb-amber border-crumb-amber/30",
+        dot: "bg-crumb-amber",
+      };
+  }
+}
+
+export function getChangeRequestStatusBadge(status: "pending" | "approved" | "rejected") {
+  switch (status) {
+    case "approved":
+      return {
+        label: "Change Approved",
+        bg: "bg-crumb-sage-light text-crumb-sage border-crumb-sage/30",
+        dot: "bg-crumb-sage",
+      };
+    case "rejected":
+      return {
+        label: "Change Rejected",
+        bg: "bg-rose-50 text-rose-700 border-rose-200",
+        dot: "bg-rose-600",
+      };
+    case "pending":
+    default:
+      return {
+        label: "Pending Change",
+        bg: "bg-amber-50 text-amber-800 border-amber-300 font-semibold",
+        dot: "bg-amber-600",
+      };
+  }
+}
+
+export function getDeadlineStatusBadge(status: string) {
+  switch (status) {
+    case "within_window":
+      return {
+        label: "Within Change Window",
+        bg: "bg-crumb-sage-light text-crumb-sage border-crumb-sage/30",
+        dot: "bg-crumb-sage",
+      };
+    case "past_deadline":
+      return {
+        label: "Change Window Closed",
+        bg: "bg-amber-50 text-amber-800 border-amber-300",
+        dot: "bg-amber-600",
+      };
+    case "prep_started":
+      return {
+        label: "Preparation Started",
+        bg: "bg-crumb-terracotta-light text-crumb-terracotta border-crumb-terracotta/30",
+        dot: "bg-crumb-terracotta",
+      };
+    case "ready":
+      return {
+        label: "Order Ready",
+        bg: "bg-emerald-50 text-emerald-700 border-emerald-200",
+        dot: "bg-emerald-600",
+      };
+    case "terminal":
+      return {
+        label: "Terminal Order",
+        bg: "bg-crumb-surface-alt text-crumb-muted border-crumb-border",
+        dot: "bg-crumb-subtle",
+      };
+    case "unresolved_schedule":
+    default:
+      return {
+        label: "Schedule Unresolved",
         bg: "bg-crumb-amber-light text-crumb-amber border-crumb-amber/30",
         dot: "bg-crumb-amber",
       };

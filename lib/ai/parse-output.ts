@@ -1,4 +1,5 @@
 import { extractedOrderSchema, type ExtractedOrderSchemaType } from "../schemas/order";
+import { normalizeWeightValue } from "../change-policy";
 
 export interface ParseResult {
   success: boolean;
@@ -48,9 +49,26 @@ function normalizePayload(
 
   // Normalize payment_amount: if string "$1200" or "1200", extract number
   if (typeof normalized.payment_amount === "string") {
-    const cleanNum = (normalized.payment_amount as string).replace(/[^0-9.]/g, "");
-    const parsedNum = parseFloat(cleanNum);
-    normalized.payment_amount = isNaN(parsedNum) ? null : parsedNum;
+    const trimmedAmount = (normalized.payment_amount as string).trim();
+    if (trimmedAmount.startsWith("-")) {
+      // Discard negative string numbers
+      normalized.payment_amount = null;
+    } else {
+      const cleanNum = trimmedAmount.replace(/[^0-9.]/g, "");
+      const parsedNum = parseFloat(cleanNum);
+      normalized.payment_amount = isNaN(parsedNum) ? null : parsedNum;
+    }
+  }
+
+  // Reject negative, non-finite or NaN payment amounts
+  if (typeof normalized.payment_amount === "number") {
+    if (
+      isNaN(normalized.payment_amount) ||
+      !isFinite(normalized.payment_amount) ||
+      normalized.payment_amount < 0
+    ) {
+      normalized.payment_amount = null;
+    }
   }
 
   // Normalize string fields: convert empty strings or "null" strings to null
@@ -75,6 +93,64 @@ function normalizePayload(
       val === "n/a"
     ) {
       normalized[field] = null;
+    }
+  }
+
+  // Normalize weight: if model returned a bare number like "1000", convert to explicit units like "1kg"
+  if (typeof normalized.weight === "string") {
+    const trimmedWeight = (normalized.weight as string).trim();
+    if (/^\d+(?:\.\d+)?$/.test(trimmedWeight)) {
+      normalized.weight = normalizeWeightValue(trimmedWeight);
+    }
+  }
+
+  // Invariant: PAYMENT RULES
+  // 1. If customer message does NOT mention payment, payment MUST be null / not_mentioned
+  if (customerMessage) {
+    const hasPaymentMention = /\b(pa(?:id|y(?:ing|ment|s)?)|sen[dt](?:ing)?|advance|deposit|upi|gpay|google\s*pay|phonepe|paytm|cash|cod|transfer|bank|rs\.?|inr|₹|dollars?|\$|euros?|€|bucks|cost|price|bill|due|balance)\b/i.test(
+      customerMessage
+    );
+
+    if (!hasPaymentMention) {
+      normalized.payment_amount = null;
+      normalized.payment_currency = null;
+      normalized.payment_method = null;
+      normalized.payment_status = "not_mentioned";
+    } else {
+      // If payment was mentioned, ensure payment_method wasn't hallucinated (e.g. "Cash" for pickup)
+      if (normalized.payment_method) {
+        const methodStr = String(normalized.payment_method).toLowerCase();
+        const msgLower = customerMessage.toLowerCase();
+        let methodFound = false;
+
+        if (methodStr.includes("cash") && /\bcash\b/i.test(msgLower)) {
+          methodFound = true;
+        } else if (
+          (methodStr.includes("gpay") || methodStr.includes("google")) &&
+          /\b(gpay|google\s*pay)\b/i.test(msgLower)
+        ) {
+          methodFound = true;
+        } else if (methodStr.includes("upi") && /\bupi\b/i.test(msgLower)) {
+          methodFound = true;
+        } else if (methodStr.includes("phonepe") && /\bphone\s*pe\b/i.test(msgLower)) {
+          methodFound = true;
+        } else if (methodStr.includes("paytm") && /\bpaytm\b/i.test(msgLower)) {
+          methodFound = true;
+        } else if (methodStr.includes("card") && /\b(card|credit|debit)\b/i.test(msgLower)) {
+          methodFound = true;
+        } else if (
+          (methodStr.includes("transfer") || methodStr.includes("bank")) &&
+          /\b(transfer|bank|neft|rtgs|imps)\b/i.test(msgLower)
+        ) {
+          methodFound = true;
+        } else if (msgLower.includes(methodStr)) {
+          methodFound = true;
+        }
+
+        if (!methodFound) {
+          normalized.payment_method = null;
+        }
+      }
     }
   }
 

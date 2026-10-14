@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseGemmaOutput, extractJsonString } from "@/lib/ai/parse-output";
+import { extractedOrderSchema } from "@/lib/schemas/order";
 
 describe("Gemma 3 4B Output Parsing & Invariants", () => {
   // TEST A: COMPLETE ORDER
@@ -288,5 +289,115 @@ Hope this helps!`;
     const parsed = parseGemmaOutput(fenced);
     expect(parsed.success).toBe(true);
     expect(parsed.data?.customer_name).toBe("Anita");
+  });
+
+  // PHASE 10 PART A: PAYMENT DATA INTEGRITY REGRESSION TESTS
+  it("PART A1: customer message without payment info strips rogue negative amount and invented Cash", () => {
+    const customerMsg =
+      "Need a 500g eggless red velvet cake for pickup on October 17, 2026 at 18:00";
+    // Rogue / hallucinated model output resembling the reported bug
+    const rogueModelOutput = JSON.stringify({
+      product: "red velvet cake",
+      quantity: 1,
+      weight: "500g",
+      requested_date: "October 17, 2026",
+      resolved_date: "2026-10-17",
+      requested_time: "18:00",
+      dietary_preference: "eggless",
+      fulfillment_method: "pickup",
+      payment_amount: -293, // Rogue negative number
+      payment_method: "Cash", // Hallucinated method
+      payment_status: "unclear",
+      notes: [],
+      missing_or_unverified: [],
+      requires_confirmation: false,
+    });
+
+    const result = parseGemmaOutput(rogueModelOutput, customerMsg);
+    expect(result.success).toBe(true);
+    expect(result.data?.payment_amount).toBeNull();
+    expect(result.data?.payment_method).toBeNull();
+    expect(result.data?.payment_status).toBe("not_mentioned");
+    expect(result.data?.fulfillment_method).toBe("pickup");
+  });
+
+  it("PART A2: customer reported paid via GPay sets customer_reported_paid and retains method", () => {
+    const customerMsg = "I've paid 1200 through GPay.";
+    const modelOutput = JSON.stringify({
+      product: "cake",
+      payment_amount: 1200,
+      payment_currency: "INR",
+      payment_method: "GPay",
+      payment_status: "customer_reported_paid",
+      notes: [],
+      missing_or_unverified: [],
+      requires_confirmation: true,
+    });
+
+    const result = parseGemmaOutput(modelOutput, customerMsg);
+    expect(result.success).toBe(true);
+    expect(result.data?.payment_amount).toBe(1200);
+    expect(result.data?.payment_method).toBe("GPay");
+    expect(result.data?.payment_status).toBe("customer_reported_paid");
+  });
+
+  it("PART A3: customer promising to send later strips hallucinated method and sets customer_reported_unpaid", () => {
+    const customerMsg = "Can you make a cake for Saturday? I'll send 1000 later.";
+    const modelOutput = JSON.stringify({
+      product: "cake",
+      payment_amount: 1000,
+      payment_currency: "INR",
+      payment_method: "Cash", // Invented Cash
+      payment_status: "customer_reported_unpaid",
+      notes: [],
+      missing_or_unverified: [],
+      requires_confirmation: true,
+    });
+
+    const result = parseGemmaOutput(modelOutput, customerMsg);
+    expect(result.success).toBe(true);
+    expect(result.data?.payment_amount).toBe(1000);
+    expect(result.data?.payment_method).toBeNull(); // Invented Cash stripped!
+    expect(result.data?.payment_status).toBe("customer_reported_unpaid");
+  });
+
+  it("PART A4: extractedOrderSchema rejects negative, NaN, and infinite payment amounts", () => {
+    const valid = {
+      product: "Fruit Cake",
+      payment_status: "not_mentioned",
+      notes: [],
+      missing_or_unverified: [],
+      requires_confirmation: false,
+    };
+
+    // Negative amount rejected
+    const negResult = extractedOrderSchema.safeParse({
+      ...valid,
+      payment_amount: -293,
+    });
+    expect(negResult.success).toBe(false);
+
+    // Infinite amount rejected
+    const infResult = extractedOrderSchema.safeParse({
+      ...valid,
+      payment_amount: Infinity,
+    });
+    expect(infResult.success).toBe(false);
+  });
+
+  // PHASE 10 PART B: BARE WEIGHT NORMALIZATION REGRESSION TEST
+  it("PART B: normalizes bare weight '1000' to explicit unit '1 kg'", () => {
+    const modelOutput = JSON.stringify({
+      product: "Black Forest Cake",
+      weight: "1000", // Bare number
+      payment_status: "not_mentioned",
+      notes: [],
+      missing_or_unverified: [],
+      requires_confirmation: false,
+    });
+
+    const result = parseGemmaOutput(modelOutput);
+    expect(result.success).toBe(true);
+    expect(result.data?.weight).toBe("1 kg");
   });
 });

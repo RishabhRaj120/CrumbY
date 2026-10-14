@@ -11,7 +11,9 @@ import {
   CheckCircle2,
   AlertTriangle,
   RefreshCw,
-  ExternalLink,
+  Clock,
+  ShieldAlert,
+  Save,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/Button";
@@ -25,6 +27,13 @@ import {
 } from "@/lib/storage/orders";
 import { downloadOrdersCsv } from "@/lib/csv";
 import { OllamaStatus } from "@/lib/ai/ollama";
+import {
+  getStoredPolicySettings,
+  setStoredPolicySettings,
+  getBrowserTimeZone,
+  CUTOFF_PRESET_OPTIONS,
+  DEFAULT_CUTOFF_HOURS,
+} from "@/lib/storage/settings";
 
 export default function SettingsPage() {
   const [ordersCount, setOrdersCount] = useState(0);
@@ -32,6 +41,13 @@ export default function SettingsPage() {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [isCheckingOllama, setIsCheckingOllama] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  // Policy Settings state
+  const [cutoffHours, setCutoffHours] = useState<number>(DEFAULT_CUTOFF_HOURS);
+  const [customHoursInput, setCustomHoursInput] = useState<string>("");
+  const [isCustomCutoff, setIsCustomCutoff] = useState(false);
+  const [policySavedMsg, setPolicySavedMsg] = useState(false);
+  const browserTimeZone = getBrowserTimeZone();
 
   const checkOllama = async () => {
     setIsCheckingOllama(true);
@@ -71,6 +87,15 @@ export default function SettingsPage() {
   useEffect(() => {
     updateCounts();
     checkOllama();
+
+    // Load policy settings
+    const settings = getStoredPolicySettings();
+    setCutoffHours(settings.cutoff_hours);
+    if (!CUTOFF_PRESET_OPTIONS.includes(settings.cutoff_hours as 12 | 24 | 48 | 72)) {
+      setIsCustomCutoff(true);
+      setCustomHoursInput(String(settings.cutoff_hours));
+    }
+
     window.addEventListener(ORDERS_CHANGED_EVENT, updateCounts);
     return () => window.removeEventListener(ORDERS_CHANGED_EVENT, updateCounts);
   }, []);
@@ -82,11 +107,29 @@ export default function SettingsPage() {
     setTimeout(() => setActionMessage(null), 3000);
   };
 
+  const handleSelectPreset = (hours: number) => {
+    setIsCustomCutoff(false);
+    setCutoffHours(hours);
+    setStoredPolicySettings({ cutoff_hours: hours });
+    setPolicySavedMsg(true);
+    setTimeout(() => setPolicySavedMsg(false), 2500);
+  };
+
+  const handleApplyCustomCutoff = () => {
+    const parsed = parseInt(customHoursInput, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      setCutoffHours(parsed);
+      setStoredPolicySettings({ cutoff_hours: parsed });
+      setPolicySavedMsg(true);
+      setTimeout(() => setPolicySavedMsg(false), 2500);
+    }
+  };
+
   return (
     <div>
       <Header
         title="Settings & Storage"
-        subtitle="Local AI engine status, privacy disclosures, and browser storage management"
+        subtitle="Local AI engine status, order change control policy, and browser storage"
         onOpenImportModal={() => {}}
         onExportCsv={() => downloadOrdersCsv(getStoredOrders())}
         onLoadDemoData={loadDemoOrders}
@@ -102,7 +145,155 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Section 1: AI Diagnostics */}
+        {/* Section 1: Order Change Policy (Phase 10) */}
+        <div className="bg-crumb-surface p-5 sm:p-6 rounded-2xl border border-crumb-border shadow-sm space-y-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-crumb-terracotta-light text-crumb-terracotta flex items-center justify-center">
+                <Clock className="w-4 h-4" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-crumb-espresso">
+                  Order Change Control Policy
+                </h2>
+                <p className="text-xs text-crumb-muted">
+                  Configure change cutoff windows, review baker approval safeguards, and verify local timezone
+                </p>
+              </div>
+            </div>
+            {policySavedMsg && (
+              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full animate-in fade-in">
+                ✓ Policy Saved
+              </span>
+            )}
+          </div>
+
+          {/* Cutoff Selector */}
+          <div className="p-4 rounded-xl bg-crumb-surface-alt/70 border border-crumb-border space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <label className="block text-xs font-bold text-crumb-espresso uppercase tracking-wider">
+                Default Cutoff Hours Before Scheduled Fulfillment
+              </label>
+              <span className="text-xs text-crumb-terracotta font-bold">
+                Current Cutoff: {cutoffHours} hours
+              </span>
+            </div>
+
+            {/* Presets */}
+            <div className="flex flex-wrap items-center gap-2">
+              {CUTOFF_PRESET_OPTIONS.map((hours) => (
+                <button
+                  key={hours}
+                  type="button"
+                  onClick={() => handleSelectPreset(hours)}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                    !isCustomCutoff && cutoffHours === hours
+                      ? "bg-crumb-terracotta text-white border-crumb-terracotta shadow-xs"
+                      : "bg-crumb-surface text-crumb-espresso border-crumb-border hover:border-crumb-terracotta"
+                  }`}
+                >
+                  {hours} Hours {hours === 24 && "(Default)"}
+                </button>
+              ))}
+
+              <button
+                type="button"
+                onClick={() => setIsCustomCutoff(true)}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                  isCustomCutoff
+                    ? "bg-crumb-terracotta text-white border-crumb-terracotta shadow-xs"
+                    : "bg-crumb-surface text-crumb-espresso border-crumb-border hover:border-crumb-terracotta"
+                }`}
+              >
+                Custom Hours...
+              </button>
+            </div>
+
+            {/* Custom hours input */}
+            {isCustomCutoff && (
+              <div className="pt-2 flex items-center gap-2 max-w-xs">
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={customHoursInput}
+                  onChange={(e) => setCustomHoursInput(e.target.value)}
+                  placeholder="e.g. 36"
+                  className="w-28 text-xs px-3 py-1.5 rounded-lg bg-crumb-surface border border-crumb-border outline-none focus:border-crumb-terracotta"
+                />
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleApplyCustomCutoff}
+                  leftIcon={<Save className="w-3.5 h-3.5" />}
+                >
+                  Apply Cutoff
+                </Button>
+              </div>
+            )}
+
+            {/* Local timezone display */}
+            <div className="pt-2 flex items-center gap-1.5 text-xs text-crumb-muted border-t border-crumb-border/50">
+              <span className="font-semibold text-crumb-espresso">
+                Local Timezone:
+              </span>
+              <span className="font-mono bg-crumb-surface px-1.5 py-0.5 rounded border border-crumb-border text-crumb-espresso">
+                {browserTimeZone}
+              </span>
+              <span className="text-[11px] text-crumb-subtle">
+                (Deadlines are calculated in your browser&apos;s local time)
+              </span>
+            </div>
+          </div>
+
+          {/* Educational Policy Disclosures */}
+          <div className="space-y-2 text-xs text-crumb-muted leading-relaxed">
+            <div className="p-3 rounded-xl bg-crumb-surface-alt/50 border border-crumb-border space-y-1">
+              <strong className="text-crumb-espresso flex items-center gap-1.5 font-bold">
+                <CheckCircle2 className="w-3.5 h-3.5 text-crumb-sage" />
+                <span>1. All Changes Require Baker Approval</span>
+              </strong>
+              <p>
+                A confirmed order is a firm commitment. Customer messages received on
+                WhatsApp or Instagram never silently overwrite an accepted order. The
+                baker manually enters proposed changes and retains complete authority
+                to approve or reject them.
+              </p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-crumb-surface-alt/50 border border-crumb-border space-y-1">
+              <strong className="text-crumb-espresso flex items-center gap-1.5 font-bold">
+                <Clock className="w-3.5 h-3.5 text-crumb-terracotta" />
+                <span>2. Scheduled Cutoff Calculation</span>
+              </strong>
+              <p>
+                Deadlines are calculated as{" "}
+                <code className="bg-crumb-surface px-1 py-0.5 rounded font-mono text-[11px] border border-crumb-border text-crumb-espresso">
+                  fulfillment datetime - {cutoffHours} hours
+                </code>
+                . A deadline can only be calculated when an order has both an unambiguous
+                calendar date (YYYY-MM-DD) and an exact pickup/delivery time. Unresolved
+                schedules cannot bypass cutoff checks.
+              </p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-crumb-surface-alt/50 border border-crumb-border space-y-1">
+              <strong className="text-crumb-espresso flex items-center gap-1.5 font-bold">
+                <ShieldAlert className="w-3.5 h-3.5 text-orange-600" />
+                <span>3. Preparation-Started Lock & Exceptional Approvals</span>
+              </strong>
+              <p>
+                Once an order transitions to <em>In Preparation</em>, ordinary changes
+                are locked immediately, even if the normal {cutoffHours}h cutoff has
+                not passed. Exceptional modifications require an explicit exception
+                action, deliberate confirmation, and a mandatory reason explaining the
+                kitchen rationale.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 2: AI Diagnostics */}
         <div className="bg-crumb-surface p-5 sm:p-6 rounded-2xl border border-crumb-border shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
@@ -180,7 +371,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Section 2: Browser Storage Management */}
+        {/* Section 3: Browser Storage Management */}
         <div className="bg-crumb-surface p-5 sm:p-6 rounded-2xl border border-crumb-border shadow-sm space-y-4">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-crumb-sage-light text-crumb-sage flex items-center justify-center">
@@ -221,7 +412,7 @@ export default function SettingsPage() {
               variant="outline"
               size="sm"
               onClick={() =>
-                handleAction("Loaded 4 sample demo orders.", loadDemoOrders)
+                handleAction("Loaded sample demo orders.", loadDemoOrders)
               }
               leftIcon={<Sparkles className="w-3.5 h-3.5 text-crumb-amber" />}
             >
@@ -260,7 +451,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Section 3: Privacy & Security Disclosures */}
+        {/* Section 4: Privacy & Security Disclosures */}
         <div className="bg-crumb-surface p-5 sm:p-6 rounded-2xl border border-crumb-border shadow-sm space-y-3.5">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-crumb-surface-alt text-crumb-espresso flex items-center justify-center">
@@ -288,7 +479,7 @@ export default function SettingsPage() {
               <strong className="text-crumb-espresso block mb-0.5">
                 2. Browser LocalStorage Limitation
               </strong>
-              Orders in this MVP are stored in your browser&apos;s localStorage. Note that browser localStorage is unencrypted. Do not store sensitive bank account credentials or credit card numbers.
+              Orders and change histories in this prototype are stored in your browser&apos;s localStorage. Browser localStorage is unencrypted and not a tamper-proof audit log. Do not store sensitive banking passwords.
             </div>
 
             <div className="p-3 rounded-xl bg-crumb-surface-alt/50 border border-crumb-border">
@@ -296,6 +487,13 @@ export default function SettingsPage() {
                 3. Customer-Reported vs Verified Payments
               </strong>
               CrumbDesk intentionally tags payments as &quot;customer_reported_paid&quot;. It does not connect to banking APIs or verify UPI balances. Always verify funds inside your actual payment app before baking.
+            </div>
+
+            <div className="p-3 rounded-xl bg-crumb-surface-alt/50 border border-crumb-border">
+              <strong className="text-crumb-espresso block mb-0.5">
+                4. Manual Change Recording (No Direct WhatsApp Bot)
+              </strong>
+              CrumbDesk is a local tool for the baker. It does not provide customer login portals or automatically connect to WhatsApp. The baker manually records customer requests to ensure absolute control over accepted kitchen commitments.
             </div>
           </div>
         </div>

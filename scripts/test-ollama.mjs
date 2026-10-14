@@ -125,8 +125,22 @@ async function run() {
       data.requires_confirmation === true
   );
 
+  const t6 = await testExtraction(
+    "TEST F (PART A REGRESSION): Order with Date, Time, Weight, Pickup but NO Payment",
+    "I need a 500g eggless red velvet cake for pickup on October 17, 2026 at 18:00.",
+    (data) =>
+      data.payment_amount === null &&
+      data.payment_method === null &&
+      data.payment_status === "not_mentioned" &&
+      data.fulfillment_method === "pickup" &&
+      (data.weight === "500g" || data.weight === "500 g") &&
+      data.product?.toLowerCase().includes("red velvet") &&
+      data.requested_time === "18:00" &&
+      data.payment_status !== "verified_paid"
+  );
+
   console.log(`\n========================================`);
-  if (t1 && t2 && t3 && t4 && t5) {
+  if (t1 && t2 && t3 && t4 && t5 && t6) {
     console.log("🎉 ALL REAL GEMMA 3 4B EXTRACTION TESTS PASSED!");
   } else {
     console.log("⚠️ Some tests failed or Ollama was unavailable.");

@@ -77,9 +77,13 @@ export const OrderFilters: React.FC<OrderFiltersProps> = ({
             }
             className="text-xs px-2.5 py-2 rounded-lg bg-crumb-surface border border-crumb-border text-crumb-espresso focus:border-crumb-terracotta outline-none"
           >
-            <option value="all">All Reviews</option>
+            <option value="all">All Statuses</option>
             <option value="needs_review">Needs Review</option>
             <option value="confirmed">Confirmed</option>
+            <option value="in_preparation">In Preparation</option>
+            <option value="ready">Ready for Pickup</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
           </select>
 
           {/* Payment Filter */}

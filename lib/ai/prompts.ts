@@ -29,12 +29,18 @@ CRITICAL INSTRUCTIONS & STRICT ACCURACY RULES:
    - Set to "delivery" ONLY if the customer explicitly mentions delivery, sending it over, or provides a delivery address (e.g., "deliver to Indiranagar", "need delivery", "drop off").
    - STRICT PROHIBITION: NEVER assume, guess, or default to "pickup" merely because the customer orders a cake, asks "can you make a cake?", or states a date/time. If the customer does NOT explicitly state whether they want pickup or delivery, fulfillment_method MUST be "unknown".
 8. PAYMENT:
+   - Extract a payment amount ONLY when supported by the customer's message.
+   - NEVER interpret a date (e.g. 17, 2026), time (e.g. 18:00), quantity, weight (e.g. 500g), or unrelated number as a payment amount.
+   - NEVER invent or assume a payment method such as Cash, GPay, UPI, or Card. If the customer does NOT explicitly state the payment method, payment_method MUST be null.
+   - When the customer mentions NO payment information at all, you MUST set:
+     "payment_amount": null,
+     "payment_currency": null,
+     "payment_method": null,
+     "payment_status": "not_mentioned"
    - Allowed payment_status: "customer_reported_paid", "customer_reported_unpaid", "not_mentioned", "unclear".
-   - If customer says "I'll send 1000 later" or "will pay on delivery", payment_status MUST be "customer_reported_unpaid". DO NOT mark as paid.
-   - If customer says "paid 1200 via GPay" or "sent payment", set "customer_reported_paid". NEVER claim payment is verified.
-   - "payment_amount": Extract numeric amount only if stated (e.g. 1000 or 1200). Do not confuse with quantity or weight.
-   - "payment_currency": e.g. "INR", "USD", "EUR" or null.
-   - "payment_method": e.g. "GPay", "PhonePe", "Cash", "Bank Transfer", or null.
+   - If customer says "I've paid 1200 through GPay", set payment_amount: 1200, payment_method: "GPay", payment_status: "customer_reported_paid". NEVER claim payment is verified.
+   - If customer says "I'll send 1000 later" or "will pay later", set payment_amount: 1000, payment_method: null, payment_status: "customer_reported_unpaid". DO NOT mark as paid.
+   - Payment amounts must ALWAYS be non-negative positive numbers. Negative numbers (-293, etc.) are strictly forbidden.
 9. MISSING OR UNVERIFIED:
    - List key missing/ambiguous items that the baker needs to confirm before baking (e.g., "Exact calendar date", "Exact pickup or delivery time", "Payment verification", "Unspecified fulfillment method", "Flavor details", "Customer name").
 10. "requires_confirmation": Set to true whenever there are missing, unverified, or customer-reported items.
