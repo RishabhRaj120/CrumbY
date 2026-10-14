@@ -96,6 +96,24 @@ describe("Phase 10: Order Change Policy & Cutoff Calculations", () => {
     expect(resRelativeDate.deadline).toBeNull();
   });
 
+  it("A3b: calculates deadline successfully when both resolved_date (2026-10-17) and time (18:00) are present", () => {
+    const res = calculateChangeDeadline(
+      {
+        resolved_date: "2026-10-17",
+        requested_time: "18:00",
+      },
+      24
+    );
+    expect(res.isResolved).toBe(true);
+    expect(res.error).toBeUndefined();
+    expect(res.deadline).not.toBeNull();
+    const d = res.deadline!;
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(9); // October
+    expect(d.getDate()).toBe(16); // 24h prior to 17th
+    expect(d.getHours()).toBe(18);
+  });
+
   it("A4 & G: evaluates deadline status with injected wall-clock time", () => {
     const order = {
       status: "confirmed" as const,

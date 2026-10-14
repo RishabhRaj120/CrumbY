@@ -19,7 +19,7 @@ This document tracks all submission requirements, verification results, document
 
 | Test Suite | Scope | Status | Notes |
 | :--- | :--- | :--- | :--- |
-| **Unit & Schema Tests** (`npm test`) | 52 automated tests in Vitest across 5 test suites | **PASSED** (52/52) | Covers CSV escaping, Zod schemas, output parsing, date resolution, payment integrity, weight normalization, and policy invariants. |
+| **Unit & Schema Tests** (`npm test`) | 57 automated tests in Vitest across 5 test suites | **PASSED** (57/57) | Covers CSV escaping, Zod schemas, output parsing, explicit calendar date resolution, payment integrity, weight normalization, and policy invariants. |
 | **Linter Check** (`npm run lint`) | Full project TypeScript check (`tsc --noEmit`) | **PASSED** (0 errors) | Strict type safety enforced across all components and server routes. |
 | **Production Build** (`npm run build`) | Static prerendering & route compilation | **PASSED** | Compiled in 4.9s, static pages generated cleanly. |
 | **Live Local AI Suite** (`npm run test:ollama`) | 6 live integration tests with Gemma 3 4B | **PASSED** (6/6) | Verifies complete orders, incomplete orders, payment ambiguity, dietary/weight, generic products, and payment omissions. |
@@ -94,5 +94,5 @@ To uphold complete technical integrity and open-source transparency:
 2. **Browser LocalStorage:** Order data is stored in the browser's `localStorage`. Orders are not currently stored in an external cloud database or synchronized across multiple devices automatically.
 3. **Audit History Scope:** The Order History timeline is an operational tracking log for the baker, NOT a cryptographic, tamper-proof blockchain ledger.
 4. **No Financial Settlement Verification:** CrumbDesk tracks customer-reported payment statements (e.g. *"Paid via GPay"*); it does NOT connect to bank APIs or verify whether funds actually cleared.
-5. **Testing & Validation Scope:** The application has been validated using synthetic, representative customer order messages and automated test suites (52 unit/policy tests + 6 live Ollama integration tests). We have received valuable workflow feedback through Reddit discussions with cottage food makers and hobbyist bakers; however, we have not yet established a completed real-world pilot with a baker or deployed the app in a commercial kitchen.
+5. **Testing & Validation Scope:** The application has been validated using synthetic, representative customer order messages and automated test suites (57 unit/policy tests + 6 live Ollama integration tests). We have received valuable workflow feedback through Reddit discussions with cottage food makers and hobbyist bakers; however, we have not yet established a completed real-world pilot with a baker or deployed the app in a commercial kitchen.
 6. **Zero Fabricated Claims:** No fake user testimonials, invented paying customers, or artificial business benchmarks are used anywhere in this submission.

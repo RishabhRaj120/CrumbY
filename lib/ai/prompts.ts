@@ -17,8 +17,9 @@ CRITICAL INSTRUCTIONS & STRICT ACCURACY RULES:
    - "weight" is the mass/size (e.g., "1 kg", "500g", "2 lbs"). NEVER discard the weight.
    - CAUTION: NEVER interpret a cake weight (like "500g") or a price/payment (like "1000") as the quantity. For "500g cake", weight is "500g", quantity is null or 1, NEVER 500.
 4. DATES:
-   - "requested_date": ALWAYS preserve the customer's verbatim date expression (e.g., "Sunday evening", "next Friday", "tomorrow").
-   - "resolved_date": ONLY set to an ISO date "YYYY-MM-DD" if it can be determined with 100% certainty from unambiguous calendar dates or explicit reference dates. If ANY ambiguity exists, return null. DO NOT GUESS.
+   - "requested_date": ALWAYS preserve the customer's verbatim date expression (e.g., "October 17, 2026", "Sunday evening", "next Friday", "tomorrow").
+   - "resolved_date": For explicitly stated, unambiguous calendar dates (e.g., "October 17, 2026", "17th Oct 2026", "2026-10-17"), format as an ISO date "YYYY-MM-DD" (e.g., "2026-10-17").
+   - For relative or ambiguous dates where the exact calendar date cannot be determined with certainty (e.g., "Sunday", "next week", "tomorrow", "this weekend"), set "resolved_date" to null. NEVER guess or invent dates for relative expressions.
 5. TIMES:
    - "requested_time": Normalize clearly stated times to 24-hour "HH:mm" (e.g. "6 PM" -> "18:00", "11:30 am" -> "11:30"). If vague (like "evening" or "around lunch"), return null and add to "missing_or_unverified".
 6. DIETARY PREFERENCE:

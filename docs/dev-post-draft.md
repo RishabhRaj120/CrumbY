@@ -125,9 +125,9 @@ Every lifecycle transition, customer proposal, baker approval, rejection reason,
 ## 5. Verification & Testing
 
 CrumbDesk is backed by comprehensive automated test suites:
-- **52 Vitest unit and domain tests** (`npm test`):
+- **57 Vitest unit and domain tests** (`npm test`):
   - Strict CSV escaping (RFC 4180).
-  - Relative date preservation and ISO resolution.
+  - Explicit calendar date resolution and relative date preservation.
   - Negative and non-finite payment amount rejection.
   - Weight unit preservation across approved/rejected proposals.
   - Cutoff deadline calculations and preparation locks.
@@ -152,7 +152,7 @@ In the spirit of open-source transparency, here is an honest summary of what Cru
 2. **Local Browser Storage:** All order records and change histories are stored in the browser's `localStorage`. Clearing browser data will delete unexported orders. (Bakers are encouraged to use the **Export CSV** feature regularly).
 3. **Operational History, Not Cryptographic Ledger:** The Order History timeline provides an accountable kitchen operational record, not a tamper-proof cryptographic blockchain.
 4. **No Financial Settlement Verification:** CrumbDesk tracks customer statements (e.g. *"I sent 1000 via GPay"*); it does not integrate with banking APIs or verify actual bank clearance.
-5. **Prototype Status & Testing Scope:** CrumbDesk is an open-source prototype developed for the Hacktoberfest 2026 challenge. Validation has been conducted using synthetic, representative order messages and automated test suites (52 unit and domain policy tests, plus 6 live Gemma 3 4B integration tests). We have incorporated useful workflow feedback through Reddit community discussions with cottage food makers and hobbyist bakers; however, we have not yet established a completed real-world pilot with a baker or deployed the software into a commercial bakery.
+5. **Prototype Status & Testing Scope:** CrumbDesk is an open-source prototype developed for the Hacktoberfest 2026 challenge. Validation has been conducted using synthetic, representative order messages and automated test suites (57 unit and domain policy tests, plus 6 live Gemma 3 4B integration tests). We have incorporated useful workflow feedback through Reddit community discussions with cottage food makers and hobbyist bakers; however, we have not yet established a completed real-world pilot with a baker or deployed the software into a commercial bakery.
 
 ---
 

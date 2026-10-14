@@ -31,6 +31,104 @@ export function extractJsonString(raw: string): string {
   return cleaned;
 }
 
+const MONTH_NAMES: Record<string, number> = {
+  jan: 1, january: 1,
+  feb: 2, february: 2,
+  mar: 3, march: 3,
+  apr: 4, april: 4,
+  may: 5,
+  jun: 6, june: 6,
+  jul: 7, july: 7,
+  aug: 8, august: 8,
+  sep: 9, sept: 9, september: 9,
+  oct: 10, october: 10,
+  nov: 11, november: 11,
+  dec: 12, december: 12,
+};
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (year < 2000 || year > 2100) return false;
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > 31) return false;
+
+  const daysInMonth = [0, 31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= daysInMonth[month];
+}
+
+function formatIsoDate(year: number, month: number, day: number): string {
+  const y = String(year);
+  const m = String(month).padStart(2, "0");
+  const d = String(day).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Resolves an explicitly stated, unambiguous calendar date into an ISO date string "YYYY-MM-DD".
+ * Supports formats such as:
+ * - "October 17, 2026", "October 17th, 2026", "Oct 17 2026", "Oct. 17, 2026"
+ * - "17 October 2026", "17th October 2026", "17th of October, 2026", "17-Oct-2026"
+ * - "2026-10-17", "2026/10/17"
+ *
+ * Returns null for relative or ambiguous expressions (e.g. "Sunday", "next week", "tomorrow", "this weekend")
+ * or expressions without a specific year or month.
+ * Formats strings directly without Date.toISOString() to guarantee zero timezone shifts.
+ */
+export function resolveExplicitCalendarDate(text: string | null | undefined): string | null {
+  if (!text || typeof text !== "string") {
+    return null;
+  }
+
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  // 1. Check ISO format: YYYY-MM-DD or YYYY/MM/DD
+  const isoMatch = trimmed.match(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    if (isValidCalendarDate(year, month, day)) {
+      return formatIsoDate(year, month, day);
+    }
+  }
+
+  // 2. Pattern: Month Day Year (e.g. "October 17, 2026", "October 17th, 2026", "Oct 17 2026")
+  const mdyMatch = trimmed.match(
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(\d{4})\b/i
+  );
+  if (mdyMatch) {
+    const monthKey = mdyMatch[1].toLowerCase();
+    const month = MONTH_NAMES[monthKey];
+    const day = parseInt(mdyMatch[2], 10);
+    const year = parseInt(mdyMatch[3], 10);
+    if (month && isValidCalendarDate(year, month, day)) {
+      return formatIsoDate(year, month, day);
+    }
+  }
+
+  // 3. Pattern: Day Month Year (e.g. "17 October 2026", "17th October 2026", "17th of October, 2026", "17-Oct-2026")
+  const dmyMatch = trimmed.match(
+    /\b(\d{1,2})(?:st|nd|rd|th)?(?:\s+of)?[\s-]+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?(?:,)?[\s-]+(\d{4})\b/i
+  );
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const monthKey = dmyMatch[2].toLowerCase();
+    const month = MONTH_NAMES[monthKey];
+    const year = parseInt(dmyMatch[3], 10);
+    if (month && isValidCalendarDate(year, month, day)) {
+      return formatIsoDate(year, month, day);
+    }
+  }
+
+  return null;
+}
+
 /**
  * Pre-processes and normalizes parsed JSON object before Zod validation.
  * Fixes common minor LLM output quirks like string quantities "1" -> 1.
@@ -154,20 +252,31 @@ function normalizePayload(
     }
   }
 
+  // Date resolution:
   // Normalize resolved_date: MUST be valid YYYY-MM-DD or null
+  let resolved: string | null = null;
   if (typeof normalized.resolved_date === "string") {
-    const trimmedDate = normalized.resolved_date.trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmedDate)) {
-      normalized.resolved_date = trimmedDate;
-    } else {
-      // If model put non-ISO string like "Sunday" into resolved_date, preserve in requested_date if needed
-      if (!normalized.requested_date && trimmedDate && trimmedDate !== "null") {
-        normalized.requested_date = trimmedDate;
-      }
-      normalized.resolved_date = null;
+    resolved = resolveExplicitCalendarDate(normalized.resolved_date);
+  }
+
+  // If resolved_date is not yet determined, check requested_date for explicit calendar date
+  if (!resolved && typeof normalized.requested_date === "string") {
+    resolved = resolveExplicitCalendarDate(normalized.requested_date);
+  }
+
+  // If still not determined, check the raw customer message for explicit calendar date
+  if (!resolved && customerMessage) {
+    resolved = resolveExplicitCalendarDate(customerMessage);
+  }
+
+  normalized.resolved_date = resolved;
+
+  // Preserve customer's wording for requested_date if model placed it in resolved_date
+  if (!normalized.requested_date && typeof rawObj.resolved_date === "string" && !resolved) {
+    const rawVal = (rawObj.resolved_date as string).trim();
+    if (rawVal && rawVal !== "null" && rawVal !== "undefined") {
+      normalized.requested_date = rawVal;
     }
-  } else {
-    normalized.resolved_date = null;
   }
 
   // Strict Invariant: NEVER allow verified payment status from extraction
@@ -247,6 +356,13 @@ function normalizePayload(
   }
   if (!normalized.resolved_date && !missing.some((m) => m.toLowerCase().includes("date"))) {
     missing.push("Exact calendar date");
+  } else if (normalized.resolved_date) {
+    // If resolved_date is successfully established, ensure "Exact calendar date" is not falsely flagged
+    normalized.missing_or_unverified = missing.filter(
+      (m) =>
+        !/^(?:exact\s+)?calendar\s+date$/i.test(m.trim()) &&
+        !/^exact\s+date$/i.test(m.trim())
+    );
   }
   if (!normalized.requested_time && !missing.some((m) => m.toLowerCase().includes("time"))) {
     missing.push("Pickup/delivery time window");

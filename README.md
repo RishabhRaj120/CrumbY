@@ -247,7 +247,7 @@ npm run start
 ## 15. How to Run the Tests
 
 ### Fast Unit & Domain Policy Tests (Vitest)
-Runs 52 focused tests covering CSV escaping, Zod schema validation, output parsing, date/time resolution, payment data integrity, weight unit preservation, cutoff deadlines, lifecycle transitions, exception safeguards, and storage recovery:
+Runs 57 focused tests covering CSV escaping, Zod schema validation, output parsing, explicit date/time resolution, payment data integrity, weight unit preservation, cutoff deadlines, lifecycle transitions, exception safeguards, and storage recovery:
 ```bash
 npm test
 ```
@@ -307,7 +307,7 @@ CrumbDesk implements a structured kitchen governance and order change control ar
 ## 18. Validation Status & Known Limitations
 
 ### Testing & Validation Scope
-- **Synthetic & Representative Order Testing:** Validation has primarily used synthetic, representative customer chat messages reflecting typical informal WhatsApp and Instagram ordering patterns, combined with automated test suites (52 unit and domain policy tests, plus 6 live Ollama integration tests).
+- **Synthetic & Representative Order Testing:** Validation has primarily used synthetic, representative customer chat messages reflecting typical informal WhatsApp and Instagram ordering patterns, combined with automated test suites (57 unit and domain policy tests, plus 6 live Ollama integration tests).
 - **Feedback from Potential Users:** We engaged with cottage food makers and hobbyist bakers in Reddit baking communities to understand real-world scheduling pain points, last-minute change conflicts, and why cloud subscription tools fail micro-kitchens.
 - **Pilot & Deployment Status:** We have **not** yet established a completed real-world pilot with a baker or deployed the software into a commercial bakery. CrumbDesk is an open-source functional prototype built for the Hacktoberfest 2026 challenge.
 
@@ -360,7 +360,7 @@ CrumbDesk implements a structured kitchen governance and order change control ar
 - [x] Immediate preparation-started edit locks & exceptional approval governance
 - [x] Change request diff comparisons & stale proposal safeguards
 - [x] Persistent order lifecycle and change history surviving page refreshes
-- [x] 52 automated unit & policy tests + 6 live Ollama integration tests passing
+- [x] 57 automated unit & policy tests + 6 live Ollama integration tests passing
 - [x] TypeScript checks pass (`npm run lint`)
 - [x] Production build succeeds (`npm run build`)
 - [x] Zero cloud AI dependencies or paid services required

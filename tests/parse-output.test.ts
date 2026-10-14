@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { parseGemmaOutput, extractJsonString } from "@/lib/ai/parse-output";
+import {
+  parseGemmaOutput,
+  extractJsonString,
+  resolveExplicitCalendarDate,
+} from "@/lib/ai/parse-output";
 import { extractedOrderSchema } from "@/lib/schemas/order";
 
 describe("Gemma 3 4B Output Parsing & Invariants", () => {
@@ -399,5 +403,111 @@ Hope this helps!`;
     const result = parseGemmaOutput(modelOutput);
     expect(result.success).toBe(true);
     expect(result.data?.weight).toBe("1 kg");
+  });
+
+  // DATE RESOLUTION: EXPLICIT DATES VS AMBIGUOUS DATES
+  describe("Explicit Calendar Date Resolution & Ambiguity Guards", () => {
+    it("resolves explicit, unambiguous calendar dates to ISO YYYY-MM-DD", () => {
+      // Month Day Year variants
+      expect(resolveExplicitCalendarDate("October 17, 2026")).toBe("2026-10-17");
+      expect(resolveExplicitCalendarDate("October 17th, 2026")).toBe("2026-10-17");
+      expect(resolveExplicitCalendarDate("Oct 17, 2026")).toBe("2026-10-17");
+      expect(resolveExplicitCalendarDate("Oct. 17, 2026")).toBe("2026-10-17");
+      expect(resolveExplicitCalendarDate("December 25, 2026")).toBe("2026-12-25");
+      expect(resolveExplicitCalendarDate("Jan 5, 2027")).toBe("2027-01-05");
+
+      // Day Month Year variants
+      expect(resolveExplicitCalendarDate("17 October 2026")).toBe("2026-10-17");
+      expect(resolveExplicitCalendarDate("17th October 2026")).toBe("2026-10-17");
+      expect(resolveExplicitCalendarDate("17th of October, 2026")).toBe("2026-10-17");
+      expect(resolveExplicitCalendarDate("17-Oct-2026")).toBe("2026-10-17");
+      expect(resolveExplicitCalendarDate("5 Jan 2027")).toBe("2027-01-05");
+
+      // ISO variants
+      expect(resolveExplicitCalendarDate("2026-10-17")).toBe("2026-10-17");
+      expect(resolveExplicitCalendarDate("2026/10/17")).toBe("2026-10-17");
+
+      // Leap year check
+      expect(resolveExplicitCalendarDate("February 29, 2024")).toBe("2024-02-29");
+    });
+
+    it("returns null for relative or ambiguous date expressions without guessing", () => {
+      expect(resolveExplicitCalendarDate("Sunday")).toBeNull();
+      expect(resolveExplicitCalendarDate("Sunday evening")).toBeNull();
+      expect(resolveExplicitCalendarDate("next week")).toBeNull();
+      expect(resolveExplicitCalendarDate("this weekend")).toBeNull();
+      expect(resolveExplicitCalendarDate("tomorrow")).toBeNull();
+      expect(resolveExplicitCalendarDate("today")).toBeNull();
+      expect(resolveExplicitCalendarDate("Friday at 6 PM")).toBeNull();
+      expect(resolveExplicitCalendarDate("in 3 days")).toBeNull();
+      expect(resolveExplicitCalendarDate("soon")).toBeNull();
+
+      // Missing year is ambiguous
+      expect(resolveExplicitCalendarDate("October 17")).toBeNull();
+      expect(resolveExplicitCalendarDate("17th Oct")).toBeNull();
+
+      // Invalid dates
+      expect(resolveExplicitCalendarDate("February 29, 2026")).toBeNull(); // 2026 is not a leap year
+      expect(resolveExplicitCalendarDate("April 31, 2026")).toBeNull(); // April has 30 days
+      expect(resolveExplicitCalendarDate("")).toBeNull();
+      expect(resolveExplicitCalendarDate(null)).toBeNull();
+      expect(resolveExplicitCalendarDate(undefined)).toBeNull();
+    });
+
+    it("parseGemmaOutput resolves explicit date from requested_date while preserving original wording", () => {
+      const customerMsg =
+        "I need a 500g eggless red velvet cake for pickup on October 17, 2026 at 18:00.";
+      const modelOutput = JSON.stringify({
+        product: "red velvet cake",
+        quantity: null,
+        weight: "500g",
+        requested_date: "October 17, 2026",
+        resolved_date: null, // Model left null
+        requested_time: "18:00",
+        dietary_preference: "eggless",
+        fulfillment_method: "pickup",
+        payment_amount: null,
+        payment_currency: null,
+        payment_method: null,
+        payment_status: "not_mentioned",
+        notes: [],
+        missing_or_unverified: ["Exact calendar date", "Payment confirmation"],
+        requires_confirmation: true,
+      });
+
+      const result = parseGemmaOutput(modelOutput, customerMsg);
+      expect(result.success).toBe(true);
+      expect(result.data?.product).toBe("red velvet cake");
+      expect(result.data?.weight).toBe("500g");
+      expect(result.data?.requested_time).toBe("18:00");
+      expect(result.data?.fulfillment_method).toBe("pickup");
+      // Customer's original wording preserved:
+      expect(result.data?.requested_date).toBe("October 17, 2026");
+      // Explicit date normalized to ISO:
+      expect(result.data?.resolved_date).toBe("2026-10-17");
+      // "Exact calendar date" removed from missing:
+      expect(result.data?.missing_or_unverified).not.toContain("Exact calendar date");
+      // Payment confirmation remains:
+      expect(result.data?.missing_or_unverified).toContain("Payment confirmation");
+    });
+
+    it("parseGemmaOutput keeps resolved_date null for relative date 'Sunday'", () => {
+      const customerMsg = "Need a chocolate cake for Sunday evening.";
+      const modelOutput = JSON.stringify({
+        product: "chocolate cake",
+        requested_date: "Sunday evening",
+        resolved_date: null,
+        payment_status: "not_mentioned",
+        notes: [],
+        missing_or_unverified: [],
+        requires_confirmation: true,
+      });
+
+      const result = parseGemmaOutput(modelOutput, customerMsg);
+      expect(result.success).toBe(true);
+      expect(result.data?.requested_date).toBe("Sunday evening");
+      expect(result.data?.resolved_date).toBeNull();
+      expect(result.data?.missing_or_unverified).toContain("Exact calendar date");
+    });
   });
 });

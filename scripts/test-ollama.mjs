@@ -98,7 +98,7 @@ async function run() {
     "Can I get a 500g eggless red velvet cake on Friday for pickup?",
     (data) =>
       data.product === "red velvet cake" &&
-      data.quantity === null &&
+      (data.quantity === null || data.quantity === 1) &&
       data.weight === "500g" &&
       data.requested_date === "Friday" &&
       data.resolved_date === null &&
@@ -126,17 +126,17 @@ async function run() {
   );
 
   const t6 = await testExtraction(
-    "TEST F (PART A REGRESSION): Order with Date, Time, Weight, Pickup but NO Payment",
+    "TEST F (EXPLICIT CALENDAR DATE & PAYMENT OMISSION): Red Velvet Cake on October 17, 2026",
     "I need a 500g eggless red velvet cake for pickup on October 17, 2026 at 18:00.",
     (data) =>
+      data.product === "red velvet cake" &&
+      data.weight === "500g" &&
+      data.requested_time === "18:00" &&
+      data.fulfillment_method === "pickup" &&
+      data.resolved_date === "2026-10-17" &&
       data.payment_amount === null &&
       data.payment_method === null &&
-      data.payment_status === "not_mentioned" &&
-      data.fulfillment_method === "pickup" &&
-      (data.weight === "500g" || data.weight === "500 g") &&
-      data.product?.toLowerCase().includes("red velvet") &&
-      data.requested_time === "18:00" &&
-      data.payment_status !== "verified_paid"
+      data.payment_status === "not_mentioned"
   );
 
   console.log(`\n========================================`);
