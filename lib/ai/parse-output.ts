@@ -31,6 +31,37 @@ export function extractJsonString(raw: string): string {
   return cleaned;
 }
 
+/**
+ * Detects whether the customer message contains an explicit statement
+ * that payment has not yet been made or will be made later.
+ */
+export function isExplicitlyUnpaidMessage(message: string): boolean {
+  if (!message || typeof message !== "string") return false;
+  const msg = message.toLowerCase();
+
+  // Pattern 1: Negative payment action (haven't / have not / didn't / not / yet to) + (paid / made payment / sent payment / transferred / done payment)
+  const negativePaid =
+    /\b(?:have\s+not|haven'?t|has\s+not|hasn'?t|did\s+not|didn'?t|had\s+not|hadn'?t|not|yet\s+to)\s+(?:yet\s+)?paid\b/i.test(msg) ||
+    /\bnot\s+paid\s+yet\b/i.test(msg) ||
+    /\byet\s+to\s+pay\b/i.test(msg) ||
+    /\b(?:have\s+not|haven'?t|has\s+not|hasn'?t|did\s+not|didn'?t|not|yet\s+to)\s+(?:yet\s+)?(?:make|made|do|done|completed?|given?)\s+(?:the\s+|any\s+|a\s+)?pay(?:ment)?\b/i.test(msg) ||
+    /\b(?:have\s+not|haven'?t|has\s+not|hasn'?t|did\s+not|didn'?t|not|yet\s+to)\s+(?:yet\s+)?(?:send|sent|transfer|transferred)\s+(?:the\s+|any\s+)?(?:pay(?:ment)?|money|amount|advance)\b/i.test(msg) ||
+    /\b(?:have\s+not|haven'?t|did\s+not|didn'?t)\s+(?:send|sent|transfer|transferred)\s+(?:it|anything)\s+yet\b/i.test(msg);
+
+  // Pattern 2: Future payment intent (will pay later, pay later, will send later, pay on pickup)
+  const futurePay =
+    /\b(?:i'?ll|i\s+will|will|shall|can|to)\s+pay\s+(?:later|afterwards|after|on\s+pickup|on\s+delivery|at\s+pickup|upon\s+pickup|upon\s+delivery)\b/i.test(msg) ||
+    /\bpay(?:ing)?\s+later\b/i.test(msg) ||
+    /\b(?:i'?ll|i\s+will|will|shall)\s+send\s+(?:(?:the\s+)?pay(?:ment)?|\d+|it)?\s*later\b/i.test(msg);
+
+  // Pattern 3: Passive payment status (payment not made / not done / pending)
+  const passivePending =
+    /\bpay(?:ment)?\s+(?:is\s+)?(?:not\s+(?:made|done|sent|completed)|pending|due|yet\s+to\s+be\s+made)\b/i.test(msg) ||
+    /\bhasn'?t\s+been\s+paid\b/i.test(msg);
+
+  return negativePaid || futurePay || passivePending;
+}
+
 const MONTH_NAMES: Record<string, number> = {
   jan: 1, january: 1,
   feb: 2, february: 2,
@@ -215,6 +246,11 @@ function normalizePayload(
       normalized.payment_method = null;
       normalized.payment_status = "not_mentioned";
     } else {
+      // If customer explicitly states they haven't paid or will pay later:
+      if (isExplicitlyUnpaidMessage(customerMessage)) {
+        normalized.payment_status = "customer_reported_unpaid";
+      }
+
       // If payment was mentioned, ensure payment_method wasn't hallucinated (e.g. "Cash" for pickup)
       if (normalized.payment_method) {
         const methodStr = String(normalized.payment_method).toLowerCase();
@@ -247,6 +283,28 @@ function normalizePayload(
 
         if (!methodFound) {
           normalized.payment_method = null;
+        }
+      }
+
+      // Guardrail: Ensure payment_amount is supported by customer message and not confused with weight, date, or time
+      if (typeof normalized.payment_amount === "number") {
+        const amtStr = String(normalized.payment_amount);
+        const paymentAmountRegex = new RegExp(
+          `(?:(?:₹|rs\\.?|inr|\\$|€|bucks|rupees|amount|pay(?:ment)?|advance|deposit|send|sent|paid)\\s*[:=-]?\\s*${amtStr}\\b|\\b${amtStr}\\s*(?:₹|rs\\.?|inr|\\$|€|bucks|rupees|advance|deposit|later))`,
+          "i"
+        );
+        const hasPaymentContext = paymentAmountRegex.test(customerMessage);
+
+        if (!hasPaymentContext) {
+          const isWeightNumber = typeof normalized.weight === "string" && normalized.weight.includes(amtStr);
+          const isYearNumber = normalized.payment_amount >= 2020 && normalized.payment_amount <= 2100;
+          const isDateNumber = typeof normalized.requested_date === "string" && new RegExp(`\\b${amtStr}\\b`).test(normalized.requested_date);
+          const isTimeNumber = typeof normalized.requested_time === "string" && normalized.requested_time.includes(amtStr);
+          const isExplicitUnpaid = isExplicitlyUnpaidMessage(customerMessage);
+
+          if (isWeightNumber || isYearNumber || isDateNumber || isTimeNumber || isExplicitUnpaid) {
+            normalized.payment_amount = null;
+          }
         }
       }
     }
@@ -350,7 +408,7 @@ function normalizePayload(
   }
 
   // Auto-flag missing essential details if model left missing_or_unverified empty
-  const missing = normalized.missing_or_unverified as string[];
+  let missing = normalized.missing_or_unverified as string[];
   if (!normalized.product && !missing.some((m) => m.toLowerCase().includes("product") || m.toLowerCase().includes("flavor"))) {
     missing.push("Exact cake flavor / product");
   }
@@ -358,7 +416,7 @@ function normalizePayload(
     missing.push("Exact calendar date");
   } else if (normalized.resolved_date) {
     // If resolved_date is successfully established, ensure "Exact calendar date" is not falsely flagged
-    normalized.missing_or_unverified = missing.filter(
+    missing = missing.filter(
       (m) =>
         !/^(?:exact\s+)?calendar\s+date$/i.test(m.trim()) &&
         !/^exact\s+date$/i.test(m.trim())
@@ -378,6 +436,8 @@ function normalizePayload(
       missing.push("Payment confirmation");
     }
   }
+
+  normalized.missing_or_unverified = missing;
 
   if (missing.length > 0) {
     normalized.requires_confirmation = true;

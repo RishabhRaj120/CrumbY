@@ -3,6 +3,7 @@ import {
   parseGemmaOutput,
   extractJsonString,
   resolveExplicitCalendarDate,
+  isExplicitlyUnpaidMessage,
 } from "@/lib/ai/parse-output";
 import { extractedOrderSchema } from "@/lib/schemas/order";
 
@@ -508,6 +509,142 @@ Hope this helps!`;
       expect(result.data?.requested_date).toBe("Sunday evening");
       expect(result.data?.resolved_date).toBeNull();
       expect(result.data?.missing_or_unverified).toContain("Exact calendar date");
+    });
+  });
+
+  // EXPLICIT UNPAID STATEMENTS & PAYMENT INVARIANTS
+  describe("Explicit Unpaid Statements & Payment Classification", () => {
+    it("isExplicitlyUnpaidMessage recognizes all standard explicit unpaid expressions", () => {
+      // Direct statements from requirements
+      expect(isExplicitlyUnpaidMessage("I haven't paid yet.")).toBe(true);
+      expect(isExplicitlyUnpaidMessage("I haven't made the payment yet.")).toBe(true);
+      expect(isExplicitlyUnpaidMessage("I'll pay later.")).toBe(true);
+      expect(isExplicitlyUnpaidMessage("I haven't sent the payment.")).toBe(true);
+
+      // Conversational variations
+      expect(isExplicitlyUnpaidMessage("Haven't paid yet")).toBe(true);
+      expect(isExplicitlyUnpaidMessage("Yet to make payment")).toBe(true);
+      expect(isExplicitlyUnpaidMessage("Will pay on pickup")).toBe(true);
+      expect(isExplicitlyUnpaidMessage("Can pay upon delivery")).toBe(true);
+      expect(isExplicitlyUnpaidMessage("Payment not done yet")).toBe(true);
+      expect(isExplicitlyUnpaidMessage("I haven't transferred the money")).toBe(true);
+      expect(isExplicitlyUnpaidMessage("I'll send 1000 later")).toBe(true);
+      expect(isExplicitlyUnpaidMessage("Paying later")).toBe(true);
+
+      // Negative controls (messages that do NOT indicate unpaid)
+      expect(isExplicitlyUnpaidMessage("I have paid 1200 through GPay.")).toBe(false);
+      expect(isExplicitlyUnpaidMessage("I've paid already.")).toBe(false);
+      expect(isExplicitlyUnpaidMessage("Payment done via UPI")).toBe(false);
+      expect(isExplicitlyUnpaidMessage("Need a cake for Sunday.")).toBe(false);
+      expect(isExplicitlyUnpaidMessage("")).toBe(false);
+    });
+
+    it("normalizes explicit unpaid customer message to customer_reported_unpaid with null amount and method", () => {
+      // Hacktoberfest demo message
+      const customerMsg =
+        "Hi! I'd like one 500g red velvet cake for my daughter's birthday. Please make it eggless. I'll pick it up on October 17, 2026, at 6 PM. I haven't made the payment yet. Could you confirm whether the order is possible?";
+
+      const modelOutput = JSON.stringify({
+        product: "red velvet cake",
+        quantity: 1,
+        weight: "500g",
+        requested_date: "October 17, 2026",
+        resolved_date: "2026-10-17",
+        requested_time: "18:00",
+        dietary_preference: "eggless",
+        fulfillment_method: "pickup",
+        payment_amount: null,
+        payment_currency: null,
+        payment_method: null,
+        payment_status: "not_mentioned", // Model mistakenly returned not_mentioned
+        notes: [],
+        missing_or_unverified: [],
+        requires_confirmation: false,
+      });
+
+      const result = parseGemmaOutput(modelOutput, customerMsg);
+      expect(result.success).toBe(true);
+      expect(result.data?.product).toBe("red velvet cake");
+      expect(result.data?.quantity).toBe(1);
+      expect(result.data?.weight).toBe("500g");
+      expect(result.data?.dietary_preference).toBe("eggless");
+      expect(result.data?.requested_date).toBe("October 17, 2026");
+      expect(result.data?.resolved_date).toBe("2026-10-17");
+      expect(result.data?.requested_time).toBe("18:00");
+      expect(result.data?.fulfillment_method).toBe("pickup");
+      // Critical assertions:
+      expect(result.data?.payment_status).toBe("customer_reported_unpaid");
+      expect(result.data?.payment_amount).toBeNull();
+      expect(result.data?.payment_method).toBeNull();
+      expect(result.data?.missing_or_unverified).toContain("Payment confirmation");
+      expect(result.data?.requires_confirmation).toBe(true);
+    });
+
+    it("prevents weight (500), date (17), or year (2026) numbers from being invented as payment_amount", () => {
+      const customerMsg =
+        "I'd like one 500g red velvet cake on October 17, 2026 at 6 PM. I haven't paid yet.";
+
+      // Model mistakenly took 500 from 500g and placed it into payment_amount
+      const modelOutputWithHallucinatedAmount = JSON.stringify({
+        product: "red velvet cake",
+        quantity: 1,
+        weight: "500g",
+        requested_date: "October 17, 2026",
+        resolved_date: "2026-10-17",
+        requested_time: "18:00",
+        dietary_preference: null,
+        fulfillment_method: "pickup",
+        payment_amount: 500, // Hallucinated from weight!
+        payment_method: "Cash", // Hallucinated method!
+        payment_status: "customer_reported_unpaid",
+        notes: [],
+        missing_or_unverified: [],
+        requires_confirmation: false,
+      });
+
+      const result = parseGemmaOutput(modelOutputWithHallucinatedAmount, customerMsg);
+      expect(result.success).toBe(true);
+      // Safeguard must discard hallucinated payment amount and invented cash
+      expect(result.data?.payment_amount).toBeNull();
+      expect(result.data?.payment_method).toBeNull();
+      expect(result.data?.payment_status).toBe("customer_reported_unpaid");
+    });
+
+    it("preserves explicit payment amount when customer promises an amount later", () => {
+      const customerMsg = "Can you make a cake for Saturday? I'll send 1000 later.";
+      const modelOutput = JSON.stringify({
+        product: "cake",
+        payment_amount: 1000,
+        payment_status: "customer_reported_unpaid",
+      });
+
+      const result = parseGemmaOutput(modelOutput, customerMsg);
+      expect(result.success).toBe(true);
+      expect(result.data?.payment_amount).toBe(1000);
+      expect(result.data?.payment_status).toBe("customer_reported_unpaid");
+      expect(result.data?.payment_method).toBeNull();
+    });
+
+    it("keeps payment_status as not_mentioned when no payment information is provided", () => {
+      const customerMsg =
+        "Need a 500g eggless red velvet cake for pickup on October 17, 2026 at 18:00.";
+      const modelOutput = JSON.stringify({
+        product: "red velvet cake",
+        weight: "500g",
+        requested_date: "October 17, 2026",
+        resolved_date: "2026-10-17",
+        requested_time: "18:00",
+        fulfillment_method: "pickup",
+        payment_amount: null,
+        payment_method: null,
+        payment_status: "not_mentioned",
+      });
+
+      const result = parseGemmaOutput(modelOutput, customerMsg);
+      expect(result.success).toBe(true);
+      expect(result.data?.payment_status).toBe("not_mentioned");
+      expect(result.data?.payment_amount).toBeNull();
+      expect(result.data?.payment_method).toBeNull();
     });
   });
 });

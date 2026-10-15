@@ -40,7 +40,12 @@ CRITICAL INSTRUCTIONS & STRICT ACCURACY RULES:
      "payment_status": "not_mentioned"
    - Allowed payment_status: "customer_reported_paid", "customer_reported_unpaid", "not_mentioned", "unclear".
    - If customer says "I've paid 1200 through GPay", set payment_amount: 1200, payment_method: "GPay", payment_status: "customer_reported_paid". NEVER claim payment is verified.
-   - If customer says "I'll send 1000 later" or "will pay later", set payment_amount: 1000, payment_method: null, payment_status: "customer_reported_unpaid". DO NOT mark as paid.
+   - If customer explicitly states they have not paid yet or will pay later (e.g., "I haven't paid yet", "I haven't made the payment yet", "I'll pay later", "I haven't sent the payment", "will pay later", "pay on pickup"):
+     set payment_status: "customer_reported_unpaid".
+     Do NOT invent a payment amount or payment method.
+     If an amount was promised (e.g., "I'll send 1000 later"), set payment_amount: 1000, payment_method: null, payment_status: "customer_reported_unpaid".
+     If no amount was promised (e.g., "I haven't made the payment yet"), set payment_amount: null, payment_method: null, payment_status: "customer_reported_unpaid".
+     NEVER set payment_status to "not_mentioned" when the customer explicitly states they have not paid.
    - Payment amounts must ALWAYS be non-negative positive numbers. Negative numbers (-293, etc.) are strictly forbidden.
 9. MISSING OR UNVERIFIED:
    - List key missing/ambiguous items that the baker needs to confirm before baking (e.g., "Exact calendar date", "Exact pickup or delivery time", "Payment verification", "Unspecified fulfillment method", "Flavor details", "Customer name").

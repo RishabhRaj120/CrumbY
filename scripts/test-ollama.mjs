@@ -139,8 +139,24 @@ async function run() {
       data.payment_status === "not_mentioned"
   );
 
+  const t7 = await testExtraction(
+    "TEST G (EXPLICIT UNPAID STATEMENT): Red Velvet Cake with Customer Unpaid",
+    "Hi! I'd like one 500g red velvet cake for my daughter's birthday. Please make it eggless. I'll pick it up on October 17, 2026, at 6 PM. I haven't made the payment yet. Could you confirm whether the order is possible?",
+    (data) =>
+      data.product === "red velvet cake" &&
+      data.weight === "500g" &&
+      data.dietary_preference === "eggless" &&
+      data.resolved_date === "2026-10-17" &&
+      data.requested_time === "18:00" &&
+      data.fulfillment_method === "pickup" &&
+      data.payment_amount === null &&
+      data.payment_method === null &&
+      data.payment_status === "customer_reported_unpaid" &&
+      data.requires_confirmation === true
+  );
+
   console.log(`\n========================================`);
-  if (t1 && t2 && t3 && t4 && t5 && t6) {
+  if (t1 && t2 && t3 && t4 && t5 && t6 && t7) {
     console.log("🎉 ALL REAL GEMMA 3 4B EXTRACTION TESTS PASSED!");
   } else {
     console.log("⚠️ Some tests failed or Ollama was unavailable.");
