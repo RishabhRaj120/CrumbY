@@ -9,7 +9,8 @@
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:ollama": "node scripts/test-ollama.mjs"
+    "test:ollama": "node scripts/test-ollama.mjs",
+    "demo:record": "node scripts/record-demo.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.16.0",
@@ -23,6 +24,7 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "autoprefixer": "^10.4.20",
+    "playwright": "^1.64.1",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.2",
